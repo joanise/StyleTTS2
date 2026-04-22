@@ -72,7 +72,7 @@ class FilePathDataset(torch.utils.data.Dataset):
                  sr=24000,
                  data_augmentation=False,
                  validation=False,
-                 OOD_data="Data/OOD_texts.txt",
+                 OOD_data="data/OOD_texts.txt",
                  min_length=50,
                  ):
 
@@ -233,7 +233,7 @@ class Collater(object):
 def build_dataloader(path_list,
                      root_path,
                      validation=False,
-                     OOD_data="Data/OOD_texts.txt",
+                     OOD_data="data/OOD_texts.txt",
                      min_length=50,
                      batch_size=4,
                      num_workers=1,

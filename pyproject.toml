@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "styletts2"
+version = "0.1.0"
+description = "StyleTTS2: Human-level TTS through style diffusion and adversarial training with large speech language models"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+dependencies = [
+    "torch>=2.0",
+    "torchaudio>=2.0",
+    "transformers>=4.30",
+    "lightning>=2.0",
+    "librosa>=0.10",
+    "soundfile",
+    "pydub",
+    "pyyaml",
+    "munch",
+    "einops>=0.6",
+    "einops-exts",
+    "tqdm",
+    "matplotlib",
+    "scipy",
+    "numpy",
+    "pandas",
+    "click",
+    "typing-extensions",
+    "monotonic-align",
+    # temporary: used by scripts/train_first.py until Lightning migration
+    "accelerate",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+# ---------------------------------------------------------------------------
+# uv configuration
+# ---------------------------------------------------------------------------
+
+[tool.uv.sources]
+# monotonic_align has no PyPI release; install from source
+monotonic-align = { git = "https://github.com/resemble-ai/monotonic_align.git" }
+
+# PyTorch CUDA wheels — uncomment and adjust the CUDA version as needed.
+# torch = { index = "pytorch-cu121" }
+# torchaudio = { index = "pytorch-cu121" }
+
+# [[tool.uv.index]]
+# name = "pytorch-cu121"
+# url = "https://download.pytorch.org/whl/cu121"
+# explicit = true

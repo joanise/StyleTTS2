@@ -21,11 +21,11 @@ import torch.nn.functional as F
 import torchaudio
 import librosa
 
-from models import *
-from meldataset import build_dataloader
-from utils import *
-from losses import *
-from optimizers import build_optimizer
+from styletts2.models import *
+from styletts2.dataset import build_dataloader
+from styletts2.utils import *
+from styletts2.losses import *
+from styletts2.optimizers import build_optimizer
 import time
 
 from accelerate import Accelerator
@@ -39,7 +39,7 @@ from accelerate.logging import get_logger
 logger = get_logger(__name__, log_level="DEBUG")
 
 @click.command()
-@click.option('-p', '--config_path', default='Configs/config.yml', type=str)
+@click.option('-p', '--config_path', default='configs/base.yml', type=str)
 def main(config_path):
     config = yaml.safe_load(open(config_path))
 
@@ -108,7 +108,7 @@ def main(config_path):
         pitch_extractor = load_F0_models(F0_path)
 
         # load BERT model
-        from Utils.PLBERT.util import load_plbert
+        from styletts2.pretrained.plbert.util import load_plbert
         BERT_path = config.get('PLBERT_dir', False)
         plbert = load_plbert(BERT_path)
 
