@@ -1,4 +1,3 @@
-from monotonic_align import maximum_path
 from monotonic_align import mask_from_lens
 from monotonic_align.core import maximum_path_c
 import numpy as np

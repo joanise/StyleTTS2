@@ -1,48 +1,20 @@
-#coding: utf-8
 import os
 import os.path as osp
-import time
 import random
 import numpy as np
-import random
 import soundfile as sf
 import librosa
 
 import torch
-from torch import nn
-import torch.nn.functional as F
 import torchaudio
 from torch.utils.data import DataLoader
 
 import logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
 import pandas as pd
 
-_pad = "$"
-_punctuation = ';:,.!?¡¿—…"«»“” '
-_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
-_letters_ipa = "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘'̩'ᵻ"
+from .text_utils import TextCleaner
 
-# Export all symbols:
-symbols = [_pad] + list(_punctuation) + list(_letters) + list(_letters_ipa)
-
-dicts = {}
-for i in range(len((symbols))):
-    dicts[symbols[i]] = i
-
-class TextCleaner:
-    def __init__(self, dummy=None):
-        self.word_index_dictionary = dicts
-    def __call__(self, text):
-        indexes = []
-        for char in text:
-            try:
-                indexes.append(self.word_index_dictionary[char])
-            except KeyError:
-                print(text)
-        return indexes
+logger = logging.getLogger(__name__)
 
 np.random.seed(1)
 random.seed(1)

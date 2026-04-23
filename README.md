@@ -10,107 +10,131 @@ Audio samples: [https://styletts2.github.io/](https://styletts2.github.io/)
 
 Online demo: [Hugging Face](https://huggingface.co/spaces/styletts2/styletts2) (thank [@fakerybakery](https://github.com/fakerybakery) for the wonderful online demo)
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yl4579/StyleTTS2/blob/main/) [![Discord](https://img.shields.io/discord/1197679063150637117?logo=discord&logoColor=white&label=Join%20our%20Community)](https://discord.gg/ha8sxdG2K4)
+[![Discord](https://img.shields.io/discord/1197679063150637117?logo=discord&logoColor=white&label=Join%20our%20Community)](https://discord.gg/ha8sxdG2K4)
 
-## TODO
-- [x] Training and inference demo code for single-speaker models (LJSpeech)
-- [x] Test training code for multi-speaker models (VCTK and LibriTTS)
-- [x] Finish demo code for multispeaker model and upload pre-trained models
-- [x] Add a finetuning script for new speakers with base pre-trained multispeaker models
-- [ ] Fix DDP (accelerator) for `train_second.py` **(I have tried everything I could to fix this but had no success, so if you are willing to help, please see [#7](https://github.com/yl4579/StyleTTS2/issues/7))**
+## Installation
 
-## Pre-requisites
-1. Python >= 3.7
-2. Clone this repository:
+Requires Python >= 3.9 and [uv](https://github.com/astral-sh/uv).
+
 ```bash
 git clone https://github.com/yl4579/StyleTTS2.git
 cd StyleTTS2
+uv sync
 ```
-3. Install python requirements: 
+
+**CUDA / PyTorch index**: by default `uv sync` installs the CPU build of PyTorch. To use a CUDA build, uncomment the `[[tool.uv.index]]` block in `pyproject.toml` and set the correct CUDA version before running `uv sync`.
+
+**Phonemizer** (required for inference notebooks):
 ```bash
-pip install -r requirements.txt
+uv pip install phonemizer
+sudo apt-get install espeak-ng   # Linux
+brew install espeak               # macOS
 ```
-On Windows add:
+
+**WavLM discriminator**: Stage 2 training downloads `microsoft/wavlm-base-plus` from HuggingFace on first run. To avoid authentication warnings set either:
 ```bash
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118 -U
+export HF_TOKEN=<your_token>
+# or, to use a cached copy with no network calls:
+export TRANSFORMERS_OFFLINE=1
 ```
-Also install phonemizer and espeak if you want to run the demo:
-```bash
-pip install phonemizer
-sudo apt-get install espeak-ng
+
+## Data preparation
+
+Place your data under `data/`. The list files must use the format:
+
 ```
-4. Download and extract the [LJSpeech dataset](https://keithito.com/LJ-Speech-Dataset/), unzip to the data folder and upsample the data to 24 kHz. The text aligner and pitch extractor are pre-trained on 24 kHz data, but you can easily change the preprocessing and re-train them using your own preprocessing. 
-For LibriTTS, you will need to combine train-clean-360 with train-clean-100 and rename the folder train-clean-460 (see [val_list_libritts.txt](https://github.com/yl4579/StyleTTS/blob/main/Data/val_list_libritts.txt) as an example).
+path/to/audio.wav|phoneme transcription|speaker_id
+```
+
+See `data/val_list.txt` for an example. Speaker labels are required for multi-speaker models. For LJSpeech (single-speaker) use `0` for all entries.
+
+For LibriTTS, combine `train-clean-100` and `train-clean-360` into a single `train-clean-460` folder before generating the list files.
+
+Out-of-distribution texts for SLM adversarial training go in `data/OOD_texts.txt`, one entry per line in `text|anything` format.
 
 ## Training
-First stage training:
-```bash
-accelerate launch train_first.py --config_path ./Configs/config.yml
-```
-Second stage training **(DDP version not working, so the current version uses DP, again see [#7](https://github.com/yl4579/StyleTTS2/issues/7) if you want to help)**:
-```bash
-python train_second.py --config_path ./Configs/config.yml
-```
-You can run both consecutively and it will train both the first and second stages. The model will be saved in the format "epoch_1st_%05d.pth" and "epoch_2nd_%05d.pth". Checkpoints and Tensorboard logs will be saved at `log_dir`. 
 
-The data list format needs to be `filename.wav|transcription|speaker`, see [val_list.txt](https://github.com/yl4579/StyleTTS2/blob/main/Data/val_list.txt) as an example. The speaker labels are needed for multi-speaker models because we need to sample reference audio for style diffusion model training. 
+Training uses a single entry point with three sequential modes.
 
-### Important Configurations
-In [config.yml](https://github.com/yl4579/StyleTTS2/blob/main/Configs/config.yml), there are a few important configurations to take care of:
-- `OOD_data`: The path for out-of-distribution texts for SLM adversarial training. The format should be `text|anything`.
-- `min_length`: Minimum length of OOD texts for training. This is to make sure the synthesized speech has a minimum length.
-- `max_len`: Maximum length of audio for training. The unit is frame. Since the default hop size is 300, one frame is approximately `300 / 24000` (0.0125) second. Lowering this if you encounter the out-of-memory issue. 
-- `multispeaker`: Set to true if you want to train a multispeaker model. This is needed because the architecture of the denoiser is different for single and multispeaker models.
-- `batch_percentage`: This is to make sure during SLM adversarial training there are no out-of-memory (OOM) issues. If you encounter OOM problem, please set a lower number for this. 
+### Stage 1 — acoustic pre-training
+
+```bash
+python train.py --mode first --config configs/base.yml
+```
+
+For multi-GPU training:
+```bash
+python train.py --mode first --config configs/base.yml --devices 4 --strategy ddp
+```
+
+Mixed precision (recommended for Stage 1 only with batch size >= 16):
+```bash
+python train.py --mode first --config configs/base.yml --devices 4 --strategy ddp --precision 16-mixed
+```
+
+### Stage 2 — joint training with SLM adversarial loss
+
+```bash
+python train.py --mode second --config configs/base.yml --devices 4 --strategy ddp
+```
+
+For LibriTTS multi-speaker:
+```bash
+python train.py --mode second --config configs/libritts.yml --devices 4 --strategy ddp
+```
+
+### Fine-tuning
+
+```bash
+python train.py --mode finetune --config configs/finetune.yml --devices 4 --strategy ddp
+```
+
+### Resuming from a checkpoint
+
+Pass `--resume` with the path to a Lightning `.ckpt` file:
+```bash
+python train.py --mode second --config configs/base.yml --resume logs/styletts2/version_0/checkpoints/epoch=10-step=50000.ckpt
+```
+
+Checkpoints and TensorBoard logs are saved under `log_dir` as configured in the config file.
+
+### Important config options
+
+In `configs/base.yml` (and the other config files):
+
+- `OOD_data`: path to out-of-distribution texts for SLM adversarial training
+- `min_length`: minimum OOD text length; ensures synthesized speech has a minimum duration
+- `max_len`: maximum training audio length in frames (hop size 300 → ~0.0125 s/frame); reduce if you hit OOM
+- `multispeaker`: set `true` for multi-speaker models (changes the denoiser architecture)
+- `batch_percentage`: fraction of the batch used for SLM adversarial steps; reduce if you hit OOM during Stage 2
+- `joint_epoch`: epoch at which SLM adversarial training begins; set higher than `epochs` to skip it
 
 ### Pre-trained modules
-In [Utils](https://github.com/yl4579/StyleTTS2/tree/main/Utils) folder, there are three pre-trained models: 
-- **[ASR](https://github.com/yl4579/StyleTTS2/tree/main/Utils/ASR) folder**: It contains the pre-trained text aligner, which was pre-trained on English (LibriTTS), Japanese (JVS), and Chinese (AiShell) corpus. It works well for most other languages without fine-tuning, but you can always train your own text aligner with the code here: [yl4579/AuxiliaryASR](https://github.com/yl4579/AuxiliaryASR).
-- **[JDC](https://github.com/yl4579/StyleTTS2/tree/main/Utils/JDC) folder**: It contains the pre-trained pitch extractor, which was pre-trained on English (LibriTTS) corpus only. However, it works well for other languages too because F0 is independent of language. If you want to train on singing corpus, it is recommended to train a new pitch extractor with the code here: [yl4579/PitchExtractor](https://github.com/yl4579/PitchExtractor).
-- **[PLBERT](https://github.com/yl4579/StyleTTS2/tree/main/Utils/PLBERT) folder**: It contains the pre-trained [PL-BERT](https://arxiv.org/abs/2301.08810) model, which was pre-trained on English (Wikipedia) corpus only. It probably does not work very well on other languages, so you will need to train a different PL-BERT for different languages using the repo here: [yl4579/PL-BERT](https://github.com/yl4579/PL-BERT). You can also use the [multilingual PL-BERT](https://huggingface.co/papercup-ai/multilingual-pl-bert) which supports 14 languages. 
 
-### Common Issues
-- **Loss becomes NaN**: If it is the first stage, please make sure you do not use mixed precision, as it can cause loss becoming NaN for some particular datasets when the batch size is not set properly (need to be more than 16 to work well). For the second stage, please also experiment with different batch sizes, with higher batch sizes being more likely to cause NaN loss values. We recommend the batch size to be 16. You can refer to issues [#10](https://github.com/yl4579/StyleTTS2/issues/10) and [#11](https://github.com/yl4579/StyleTTS2/issues/11) for more details.
-- **Out of memory**: Please either use lower `batch_size` or `max_len`. You may refer to issue [#10](https://github.com/yl4579/StyleTTS2/issues/10) for more information.
-- **Non-English dataset**: You can train on any language you want, but you will need to use a pre-trained PL-BERT model for that language. We have a pre-trained [multilingual PL-BERT](https://huggingface.co/papercup-ai/multilingual-pl-bert) that supports 14 languages. You may refer to [yl4579/StyleTTS#10](https://github.com/yl4579/StyleTTS/issues/10) and [#70](https://github.com/yl4579/StyleTTS2/issues/70) for some examples to train on Chinese datasets. 
+Three pretrained components live under `styletts2/pretrained/`:
 
-## Finetuning
-The script is modified from `train_second.py` which uses DP, as DDP does not work for `train_second.py`. Please see the bold section above if you are willing to help with this problem. 
-```bash
-python train_finetune.py --config_path ./Configs/config_ft.yml
-```
-Please make sure you have the LibriTTS checkpoint downloaded and unzipped under the folder. The default configuration `config_ft.yml` finetunes on LJSpeech with 1 hour of speech data (around 1k samples) for 50 epochs. This took about 4 hours to finish on four NVidia A100. The quality is slightly worse (similar to NaturalSpeech on LJSpeech) than LJSpeech model trained from scratch with 24 hours of speech data, which took around 2.5 days to finish on four A100. The samples can be found at [#65 (comment)](https://github.com/yl4579/StyleTTS2/discussions/65#discussioncomment-7668393). 
+- **`asr/`** — text aligner pretrained on English (LibriTTS), Japanese (JVS), and Chinese (AiShell). Works for most languages without fine-tuning. Retrain with [yl4579/AuxiliaryASR](https://github.com/yl4579/AuxiliaryASR).
+- **`jdc/`** — pitch extractor pretrained on English (LibriTTS). F0 is language-independent so it generalises well; retrain for singing with [yl4579/PitchExtractor](https://github.com/yl4579/PitchExtractor).
+- **`plbert/`** — [PL-BERT](https://arxiv.org/abs/2301.08810) pretrained on English Wikipedia. For other languages use [yl4579/PL-BERT](https://github.com/yl4579/PL-BERT) or the [multilingual PL-BERT](https://huggingface.co/papercup-ai/multilingual-pl-bert) (14 languages).
 
-If you are using a **single GPU** (because the script doesn't work with DDP) and want to save training speed and VRAM, you can do (thank [@korakoe](https://github.com/korakoe) for making the script at [#100](https://github.com/yl4579/StyleTTS2/pull/100)):
-```bash
-accelerate launch --mixed_precision=fp16 --num_processes=1 train_finetune_accelerate.py --config_path ./Configs/config_ft.yml
-```
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yl4579/StyleTTS2/blob/main/Colab/StyleTTS2_Finetune_Demo.ipynb)
+### Common training issues
 
-### Common Issues
-[@Kreevoz](https://github.com/Kreevoz) has made detailed notes on common issues in finetuning, with suggestions in maximizing audio quality: [#81](https://github.com/yl4579/StyleTTS2/discussions/81). Some of these also apply to training from scratch. [@IIEleven11](https://github.com/IIEleven11) has also made a guideline for fine-tuning: [#128](https://github.com/yl4579/StyleTTS2/discussions/128).
-
-- **Out of memory after `joint_epoch`**: This is likely because your GPU RAM is not big enough for SLM adversarial training run. You may skip that but the quality could be worse. Setting `joint_epoch` a larger number than `epochs` could skip the SLM advesariral training.
+- **Loss becomes NaN**: For Stage 1, avoid mixed precision unless batch size >= 16. For Stage 2, try a lower batch size; 16 is recommended.
+- **Out of memory**: Lower `batch_size` or `max_len` in the config; reduce `batch_percentage` for OOM during Stage 2 SLM adversarial steps.
+- **Non-English data**: Use a PL-BERT pretrained for your language. The [multilingual PL-BERT](https://huggingface.co/papercup-ai/multilingual-pl-bert) supports 14 languages.
 
 ## Inference
-Please refer to [Inference_LJSpeech.ipynb](https://github.com/yl4579/StyleTTS2/blob/main/Demo/Inference_LJSpeech.ipynb) (single-speaker) and [Inference_LibriTTS.ipynb](https://github.com/yl4579/StyleTTS2/blob/main/Demo/Inference_LibriTTS.ipynb) (multi-speaker) for details. For LibriTTS, you will also need to download [reference_audio.zip](https://huggingface.co/yl4579/StyleTTS2-LibriTTS/resolve/main/reference_audio.zip) and unzip it under the `demo` before running the demo. 
 
-- The pretrained StyleTTS 2 on LJSpeech corpus in 24 kHz can be downloaded at [https://huggingface.co/yl4579/StyleTTS2-LJSpeech/tree/main](https://huggingface.co/yl4579/StyleTTS2-LJSpeech/tree/main).
+See [Demo/Inference_LJSpeech.ipynb](Demo/Inference_LJSpeech.ipynb) (single-speaker) and [Demo/Inference_LibriTTS.ipynb](Demo/Inference_LibriTTS.ipynb) (multi-speaker). For LibriTTS, download [reference_audio.zip](https://huggingface.co/yl4579/StyleTTS2-LibriTTS/resolve/main/reference_audio.zip) and unzip it under `Demo/` before running.
 
-  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yl4579/StyleTTS2/blob/main/Colab/StyleTTS2_Demo_LJSpeech.ipynb)
+Pre-trained models:
+- LJSpeech (24 kHz): [https://huggingface.co/yl4579/StyleTTS2-LJSpeech](https://huggingface.co/yl4579/StyleTTS2-LJSpeech/tree/main)
+- LibriTTS: [https://huggingface.co/yl4579/StyleTTS2-LibriTTS](https://huggingface.co/yl4579/StyleTTS2-LibriTTS/tree/main)
 
-- The pretrained StyleTTS 2 model on LibriTTS can be downloaded at [https://huggingface.co/yl4579/StyleTTS2-LibriTTS/tree/main](https://huggingface.co/yl4579/StyleTTS2-LibriTTS/tree/main). 
+### Common inference issues
 
-  [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yl4579/StyleTTS2/blob/main/Colab/StyleTTS2_Demo_LibriTTS.ipynb)
-
-
-You can import StyleTTS 2 and run it in your own code. However, the inference depends on a GPL-licensed package, so it is not included directly in this repository. A [GPL-licensed fork](https://github.com/NeuralVox/StyleTTS2) has an importable script, as well as an experimental streaming API, etc. A [fully MIT-licensed package](https://pypi.org/project/styletts2/) that uses gruut (albeit lower quality due to mismatch between phonemizer and gruut) is also available.  
-
-***Before using these pre-trained models, you agree to inform the listeners that the speech samples are synthesized by the pre-trained models, unless you have the permission to use the voice you synthesize. That is, you agree to only use voices whose speakers grant the permission to have their voice cloned, either directly or by license before making synthesized voices public, or you have to publicly announce that these voices are synthesized if you do not have the permission to use these voices.*** 
-
-### Common Issues
-- **High-pitched background noise**: This is caused by numerical float differences in older GPUs. For more details, please refer to issue [#13](https://github.com/yl4579/StyleTTS2/issues/13). Basically, you will need to use more modern GPUs or do inference on CPUs.
-- **Pre-trained model license**: You only need to abide by the above rules if you use **the pre-trained models** and the voices are **NOT** in the training set, i.e., your reference speakers are not from any open access dataset. For more details of rules to use the pre-trained models, please see [#37](https://github.com/yl4579/StyleTTS2/issues/37).
+- **High-pitched background noise**: Caused by float precision differences on older GPUs. Use a newer GPU or run inference on CPU. See [#13](https://github.com/yl4579/StyleTTS2/issues/13).
+- **Pre-trained model license**: The license terms below apply when using pre-trained models with speakers not in the training set.
 
 ## References
 - [archinetai/audio-diffusion-pytorch](https://github.com/archinetai/audio-diffusion-pytorch)
