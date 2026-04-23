@@ -164,6 +164,19 @@ class StyleTTS2Module(L.LightningModule):
                     "Set pretrained_model in config to load a Stage 2 checkpoint directly."
                 )
 
+        # Freeze parameters never trained in this mode.
+        # DDP only allreduces params with requires_grad=True, so freezing unused
+        # networks eliminates the "unused parameters" DDP error without the
+        # overhead of find_unused_parameters=True.
+        if self.mode == 'first':
+            for key in ('bert', 'bert_encoder', 'predictor', 'predictor_encoder',
+                        'diffusion', 'wd', 'pitch_extractor'):
+                getattr(self, key).requires_grad_(False)
+        elif self.mode == 'second':
+            # These are always called inside torch.no_grad() in Stage 2
+            for net in (self.text_aligner, self.text_encoder, self.pitch_extractor):
+                net.requires_grad_(False)
+
     def configure_optimizers(self):
         opt_cfg = Munch(self.config['optimizer_params'])
         # OneCycleLR with pct_start=0, div_factor=1, final_div_factor=1 is a
@@ -174,6 +187,10 @@ class StyleTTS2Module(L.LightningModule):
 
         optimizers, schedulers = [], []
         for key in self._net_keys:
+            trainable = [p for p in getattr(self, key).parameters() if p.requires_grad]
+            if not trainable:
+                continue  # frozen in setup() — no optimizer needed
+
             self._opt_key_to_idx[key] = len(optimizers)
 
             lr = float(opt_cfg.lr)
@@ -190,8 +207,7 @@ class StyleTTS2Module(L.LightningModule):
                 lr = float(opt_cfg.ft_lr)
                 max_lr = float(opt_cfg.ft_lr) * 2
 
-            opt = AdamW(getattr(self, key).parameters(),
-                        lr=lr, weight_decay=wd, betas=betas, eps=1e-9)
+            opt = AdamW(trainable, lr=lr, weight_decay=wd, betas=betas, eps=1e-9)
             sched = OneCycleLR(opt, max_lr=max_lr, epochs=epochs,
                                steps_per_epoch=steps_per_epoch,
                                pct_start=0.0, div_factor=1, final_div_factor=1)
@@ -438,45 +454,50 @@ class StyleTTS2Module(L.LightningModule):
         s = self.style_encoder(st.unsqueeze(1) if self.multispeaker else gt.unsqueeze(1))
         y_rec = self.decoder(en, F0_real, real_norm, s)
 
-        # -- Discriminator update (after TMA epoch) ----------------------
+        # -- Discriminator update -----------------------------------------
+        # Always backward through msd/mpd so DDP can allreduce their grads;
+        # only apply the step after TMA_epoch when discriminator training begins.
+        self._zero_grad_all()
+        d_loss = self.dl(wav.unsqueeze(1).float(), y_rec.detach()).mean()
+        self.manual_backward(d_loss)
         if epoch >= self.TMA_epoch:
-            self._zero_grad_all()
-            d_loss = self.dl(wav.unsqueeze(1).float(), y_rec.detach()).mean()
-            self.manual_backward(d_loss)
             self._step('msd', 'mpd')
-        else:
-            d_loss = 0.0
 
-        # -- Generator update --------------------------------------------
+        # -- Generator update ---------------------------------------------
         self._zero_grad_all()
         loss_mel = self.stft_loss(y_rec.squeeze(), wav)
+        # Always compute every term so text_aligner stays in the DDP graph
+        # regardless of the random s2s_attn / s2s_attn_mono choice above.
+        loss_s2s = sum(
+            F.cross_entropy(pred[:l], text[:l])
+            for pred, text, l in zip(s2s_pred, texts, input_lengths)
+        ) / texts.size(0)
+        loss_mono = F.l1_loss(s2s_attn, s2s_attn_mono) * 10
+        loss_gen_all = self.gl(wav.unsqueeze(1).float(), y_rec).mean()
+        loss_slm = self.wl(wav, y_rec).mean()
 
         if epoch >= self.TMA_epoch:
-            loss_s2s = sum(
-                F.cross_entropy(pred[:l], text[:l])
-                for pred, text, l in zip(s2s_pred, texts, input_lengths)
-            ) / texts.size(0)
-            loss_mono = F.l1_loss(s2s_attn, s2s_attn_mono) * 10
-            loss_gen_all = self.gl(wav.unsqueeze(1).float(), y_rec).mean()
-            loss_slm = self.wl(wav, y_rec).mean()
             g_loss = (self.loss_params.lambda_mel * loss_mel
                       + self.loss_params.lambda_mono * loss_mono
                       + self.loss_params.lambda_s2s * loss_s2s
                       + self.loss_params.lambda_gen * loss_gen_all
                       + self.loss_params.lambda_slm * loss_slm)
         else:
-            loss_s2s = loss_mono = loss_gen_all = loss_slm = 0.0
-            g_loss = loss_mel
+            # Zero-scale the extra terms: gradients reach text_aligner (via
+            # s2s_pred / s2s_attn) and msd/mpd (via loss_gen_all) so DDP can
+            # sync them, but the values don't affect the actual parameter update.
+            g_loss = (self.loss_params.lambda_mel * loss_mel
+                      + 0.0 * (loss_s2s + loss_mono + loss_gen_all + loss_slm))
 
         self.manual_backward(g_loss)
         self._step('text_encoder', 'style_encoder', 'decoder')
         if epoch >= self.TMA_epoch:
-            self._step('text_aligner', 'pitch_extractor')
+            self._step('text_aligner')
 
         self.log_dict({
             'train/mel': loss_mel,
             'train/gen': loss_gen_all if isinstance(loss_gen_all, torch.Tensor) else torch.tensor(loss_gen_all),
-            'train/disc': d_loss if isinstance(d_loss, torch.Tensor) else torch.tensor(d_loss),
+            'train/disc': d_loss,
             'train/mono': loss_mono if isinstance(loss_mono, torch.Tensor) else torch.tensor(loss_mono),
             'train/s2s': loss_s2s if isinstance(loss_s2s, torch.Tensor) else torch.tensor(loss_s2s),
             'train/slm': loss_slm if isinstance(loss_slm, torch.Tensor) else torch.tensor(loss_slm),
@@ -559,7 +580,11 @@ class StyleTTS2Module(L.LightningModule):
                     s_trg.unsqueeze(1), embedding=bert_dur).mean()
             loss_sty = F.l1_loss(s_preds, s_trg.detach())
         else:
-            loss_sty = loss_diff = 0.0
+            # Zero-weight forward keeps diffusion in DDP sync graph before
+            # diff_epoch without running the expensive sampler.
+            loss_diff = 0.0 * self.diffusion.diffusion(
+                s_trg.unsqueeze(1), embedding=bert_dur).mean()
+            loss_sty = 0.0
 
         d, p = self.predictor(d_en, s_dur, input_lengths, s2s_attn_mono, text_mask)
 
@@ -593,15 +618,15 @@ class StyleTTS2Module(L.LightningModule):
         loss_F0_rec = F.smooth_l1_loss(F0_real, F0_fake) / 10
         loss_norm_rec = F.smooth_l1_loss(N_real, N_fake)
 
-        # -- Discriminator update ----------------------------------------
+        # -- Discriminator update -----------------------------------------
+        # Always backward through msd/mpd so DDP can allreduce their grads;
+        # only apply the step once discriminator training is active.
         start_ds = epoch >= self.diff_epoch or is_ft
+        self._zero_grad_all()
+        d_loss = self.dl(wav_for_disc.detach(), y_rec.detach()).mean()
+        self.manual_backward(d_loss)
         if start_ds:
-            self._zero_grad_all()
-            d_loss = self.dl(wav_for_disc.detach(), y_rec.detach()).mean()
-            self.manual_backward(d_loss)
             self._step('msd', 'mpd')
-        else:
-            d_loss = 0.0
 
         # -- Duration / CE losses ----------------------------------------
         loss_ce = loss_dur = 0.0
@@ -707,7 +732,7 @@ class StyleTTS2Module(L.LightningModule):
 
         self.log_dict({
             'train/mel': loss_mel,
-            'train/disc': d_loss if isinstance(d_loss, torch.Tensor) else torch.tensor(float(d_loss)),
+            'train/disc': d_loss,
             'train/dur': loss_dur if isinstance(loss_dur, torch.Tensor) else torch.tensor(float(loss_dur)),
             'train/ce': loss_ce if isinstance(loss_ce, torch.Tensor) else torch.tensor(float(loss_ce)),
             'train/norm': loss_norm_rec,
