@@ -230,6 +230,7 @@ class StyleTTS2Module(L.LightningModule):
                     en = b['asr'][bib, :, :mel_length // 2].unsqueeze(0).to(self.device)
 
                     F0_real, _, _ = self.pitch_extractor(gt.unsqueeze(1))
+                    F0_real = F0_real.unsqueeze(0)
                     s = self.style_encoder(gt.unsqueeze(1))
                     real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
                     y_rec = self.decoder(en, F0_real, real_norm, s)
@@ -248,6 +249,7 @@ class StyleTTS2Module(L.LightningModule):
                         en = b['asr'][bib, :, :mel_length // 2].unsqueeze(0).to(self.device)
 
                         F0_real, _, _ = self.pitch_extractor(gt.unsqueeze(1))
+                        F0_real = F0_real.unsqueeze(0)
                         s = self.style_encoder(gt.unsqueeze(1))
                         real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
                         y_rec = self.decoder(en, F0_real, real_norm, s)
