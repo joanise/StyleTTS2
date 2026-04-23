@@ -14,7 +14,7 @@ from .models import build_model, load_ASR_models, load_F0_models, load_checkpoin
 from .losses import MultiResolutionSTFTLoss, GeneratorLoss, DiscriminatorLoss, WavLMLoss
 from .utils import (
     recursive_munch, get_data_path_list,
-    length_to_mask, log_norm, maximum_path, mask_from_lens,
+    length_to_mask, log_norm, maximum_path, mask_from_lens, get_image,
 )
 from .dataset import build_dataloader
 from .modules.slmadv import SLMAdversarialLoss
@@ -197,7 +197,7 @@ class StyleTTS2Module(L.LightningModule):
                                pct_start=0.0, div_factor=1, final_div_factor=1)
 
             optimizers.append(opt)
-            schedulers.append({'scheduler': sched, 'interval': 'step', 'frequency': 1})
+            schedulers.append({'scheduler': sched, 'interval': 'step', 'frequency': 1, 'name': f'lr/{key}'})
 
         return optimizers, schedulers
 
@@ -210,6 +210,119 @@ class StyleTTS2Module(L.LightningModule):
                 np.mean(self._running_std)
             )
             self._running_std.clear()
+
+    def on_validation_epoch_end(self):
+        if not self.trainer.is_global_zero or not hasattr(self, '_val_batch'):
+            return
+
+        tb = self.logger.experiment
+        epoch = self.current_epoch
+        b = self._val_batch
+
+        with torch.no_grad():
+            if self.mode == 'first':
+                tb.add_figure('eval/attn',
+                              get_image(b['s2s_attn'][0].numpy().squeeze()),
+                              epoch)
+                for bib in range(min(len(b['asr']), 7)):
+                    mel_length = int(b['mel_input_length'][bib].item())
+                    gt = b['mels'][bib, :, :mel_length].unsqueeze(0).to(self.device)
+                    en = b['asr'][bib, :, :mel_length // 2].unsqueeze(0).to(self.device)
+
+                    F0_real, _, _ = self.pitch_extractor(gt.unsqueeze(1))
+                    s = self.style_encoder(gt.unsqueeze(1))
+                    real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
+                    y_rec = self.decoder(en, F0_real, real_norm, s)
+
+                    tb.add_audio(f'eval/y{bib}', y_rec.cpu().numpy().squeeze(),
+                                 epoch, sample_rate=self.sr)
+                    if epoch == 0:
+                        tb.add_audio(f'gt/y{bib}', b['waves'][bib].squeeze(),
+                                     epoch, sample_rate=self.sr)
+
+            else:
+                if epoch < self.joint_epoch and self.mode != 'finetune':
+                    for bib in range(min(len(b['asr']), 6)):
+                        mel_length = int(b['mel_input_length'][bib].item())
+                        gt = b['mels'][bib, :, :mel_length].unsqueeze(0).to(self.device)
+                        en = b['asr'][bib, :, :mel_length // 2].unsqueeze(0).to(self.device)
+
+                        F0_real, _, _ = self.pitch_extractor(gt.unsqueeze(1))
+                        s = self.style_encoder(gt.unsqueeze(1))
+                        real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
+                        y_rec = self.decoder(en, F0_real, real_norm, s)
+                        tb.add_audio(f'eval/y{bib}', y_rec.cpu().numpy().squeeze(),
+                                     epoch, sample_rate=self.sr)
+
+                        s_dur = self.predictor_encoder(gt.unsqueeze(1))
+                        p_en = b['p'][bib, :, :mel_length // 2].unsqueeze(0).to(self.device)
+                        F0_fake, N_fake = self.predictor.F0Ntrain(p_en, s_dur)
+                        y_pred = self.decoder(en, F0_fake, N_fake, s)
+                        tb.add_audio(f'pred/y{bib}', y_pred.cpu().numpy().squeeze(),
+                                     epoch, sample_rate=self.sr)
+
+                        if epoch == 0:
+                            tb.add_audio(f'gt/y{bib}', b['waves'][bib].squeeze(),
+                                         epoch, sample_rate=self.sr)
+                else:
+                    # Diffusion-sampled TTS from text
+                    texts = b['texts'].to(self.device)
+                    input_lengths = b['input_lengths'].to(self.device)
+                    text_mask = b['text_mask'].to(self.device)
+                    bert_dur = b['bert_dur'].to(self.device)
+                    d_en = b['d_en'].to(self.device)
+
+                    ref_s = None
+                    if self.multispeaker and b['ref_mels'] is not None:
+                        ref_mels = b['ref_mels'].to(self.device)
+                        ref_ss = self.style_encoder(ref_mels.unsqueeze(1))
+                        ref_sp = self.predictor_encoder(ref_mels.unsqueeze(1))
+                        ref_s = torch.cat([ref_ss, ref_sp], dim=1)
+
+                    t_en = self.text_encoder(texts, input_lengths, text_mask)
+
+                    for bib in range(min(d_en.size(0), 6)):
+                        noise = torch.randn((1, 256), device=self.device).unsqueeze(1)
+                        sampler_kwargs = dict(
+                            noise=noise,
+                            embedding=bert_dur[bib].unsqueeze(0),
+                            embedding_scale=1,
+                            num_steps=5,
+                        )
+                        if self.multispeaker and ref_s is not None:
+                            sampler_kwargs['features'] = ref_s[bib].unsqueeze(0)
+                        s_pred = self._sampler(**sampler_kwargs).squeeze(1)
+
+                        s = s_pred[:, 128:]
+                        ref = s_pred[:, :128]
+
+                        il = input_lengths[bib].unsqueeze(0)
+                        tm = text_mask[bib, :input_lengths[bib]].unsqueeze(0)
+                        d = self.predictor.text_encoder(
+                            d_en[bib, :, :input_lengths[bib]].unsqueeze(0), s, il, tm)
+                        x, _ = self.predictor.lstm(d)
+                        duration = torch.sigmoid(
+                            self.predictor.duration_proj(x)).sum(axis=-1)
+                        pred_dur = torch.round(duration.squeeze()).clamp(min=1)
+                        pred_dur[-1] += 5
+
+                        pred_aln = torch.zeros(
+                            input_lengths[bib], int(pred_dur.sum().item()),
+                            device=self.device)
+                        c = 0
+                        for i in range(pred_aln.size(0)):
+                            pred_aln[i, c:c + int(pred_dur[i].item())] = 1
+                            c += int(pred_dur[i].item())
+
+                        en = (d.transpose(-1, -2) @ pred_aln.unsqueeze(0))
+                        F0_pred, N_pred = self.predictor.F0Ntrain(en, s)
+                        out = self.decoder(
+                            t_en[bib, :, :input_lengths[bib]].unsqueeze(0)
+                            @ pred_aln.unsqueeze(0),
+                            F0_pred, N_pred, ref.squeeze().unsqueeze(0))
+
+                        tb.add_audio(f'pred/y{bib}', out.cpu().numpy().squeeze(),
+                                     epoch, sample_rate=self.sr)
 
     # ------------------------------------------------------------------
     # Optimizer helpers
@@ -652,6 +765,15 @@ class StyleTTS2Module(L.LightningModule):
         self.log('val/mel', loss_mel, prog_bar=True,
                  on_step=False, on_epoch=True, sync_dist=True)
 
+        if self.trainer.is_global_zero:
+            self._val_batch = dict(
+                s2s_attn=s2s_attn.detach().cpu(),
+                asr=asr.detach().cpu(),
+                mels=mels.detach().cpu(),
+                mel_input_length=mel_input_length.detach().cpu(),
+                waves=waves,
+            )
+
     def _validate_second(self, batch, batch_idx):
         device = self.device
         try:
@@ -713,6 +835,21 @@ class StyleTTS2Module(L.LightningModule):
                 'val/dur': loss_dur,
                 'val/F0': loss_F0,
             }, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+
+            if self.trainer.is_global_zero:
+                self._val_batch = dict(
+                    asr=asr.detach().cpu(),
+                    mels=mels.detach().cpu(),
+                    mel_input_length=mel_input_length.detach().cpu(),
+                    waves=waves,
+                    p=p.detach().cpu(),
+                    d_en=d_en.detach().cpu(),
+                    bert_dur=bert_dur.detach().cpu(),
+                    texts=texts.detach().cpu(),
+                    input_lengths=input_lengths.detach().cpu(),
+                    text_mask=text_mask.detach().cpu(),
+                    ref_mels=ref_mels.detach().cpu() if self.multispeaker else None,
+                )
 
         except Exception as e:
             pass
