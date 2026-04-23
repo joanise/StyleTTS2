@@ -2,10 +2,9 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 
-class SLMAdversarialLoss(torch.nn.Module):
+class SLMAdversarialLoss:
 
     def __init__(self, model, wl, sampler, min_len, max_len, batch_percentage=0.5, skip_update=10, sig=1.5):
-        super(SLMAdversarialLoss, self).__init__()
         self.model = model
         self.wl = wl
         self.sampler = sampler
