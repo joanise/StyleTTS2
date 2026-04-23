@@ -6,6 +6,7 @@ import yaml
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import TensorBoardLogger
+from lightning.pytorch.strategies import DDPStrategy
 
 from styletts2.lightning import StyleTTS2DataModule, StyleTTS2Module
 
@@ -47,10 +48,20 @@ def main(config_path, mode, resume, devices, strategy, precision):
     )
     lr_monitor = LearningRateMonitor(logging_interval='step')
 
+    # GAN training uses separate discriminator and generator backward passes per
+    # step, so different subsets of trainable parameters participate in each
+    # backward. find_unused_parameters=True is required for DDP correctness here.
+    # The freezing done in setup() already removes the truly-never-trained networks
+    # from DDP's parameter list, keeping the graph traversal cheap.
+    if strategy == 'ddp' or (devices > 1 and strategy == 'auto'):
+        resolved_strategy = DDPStrategy(find_unused_parameters=True)
+    else:
+        resolved_strategy = strategy
+
     trainer = L.Trainer(
         max_epochs=max_epochs,
         devices=devices,
-        strategy=strategy,
+        strategy=resolved_strategy,
         precision=precision,
         logger=tb_logger,
         callbacks=[checkpoint_cb, lr_monitor],
