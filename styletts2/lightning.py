@@ -143,20 +143,33 @@ class StyleTTS2Module(L.LightningModule):
 
         # Stage 2 / finetune: load Stage 1 weights (weights only, not optimizer state)
         if self.mode in ('second', 'finetune') and not self.config.get('pretrained_model', ''):
-            first_stage_path = os.path.join(
-                self.config['log_dir'],
-                self.config.get('first_stage_path', 'first_stage.pth'),
-            )
+            first_stage_path = self.config.get('first_stage_path', '')
             if os.path.isfile(first_stage_path):
-                load_checkpoint(
-                    {k: getattr(self, k) for k in self._net_keys},
-                    None, first_stage_path,
-                    load_only_params=True,
-                    ignore_modules=[
-                        'bert', 'bert_encoder', 'predictor', 'predictor_encoder',
-                        'msd', 'mpd', 'wd', 'diffusion',
-                    ],
-                )
+                _ignore = {'bert', 'bert_encoder', 'predictor', 'predictor_encoder',
+                           'msd', 'mpd', 'wd', 'diffusion'}
+                state = torch.load(first_stage_path, map_location='cpu', weights_only=False)
+                if 'state_dict' in state:
+                    # Lightning checkpoint: extract per-submodule state dicts
+                    for key in self._net_keys:
+                        if key in _ignore:
+                            continue
+                        prefix = key + '.'
+                        sub_sd = {k[len(prefix):]: v
+                                  for k, v in state['state_dict'].items()
+                                  if k.startswith(prefix)}
+                        if sub_sd:
+                            getattr(self, key).load_state_dict(sub_sd, strict=False)
+                            print(f'{key} loaded')
+                    for key in self._net_keys:
+                        getattr(self, key).eval()
+                else:
+                    # Legacy format (original train_first.py checkpoints)
+                    load_checkpoint(
+                        {k: getattr(self, k) for k in self._net_keys},
+                        None, first_stage_path,
+                        load_only_params=True,
+                        ignore_modules=list(_ignore),
+                    )
                 self.predictor_encoder = copy.deepcopy(self.style_encoder)
             else:
                 raise FileNotFoundError(
