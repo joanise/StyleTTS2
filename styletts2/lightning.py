@@ -822,80 +822,76 @@ class StyleTTS2Module(L.LightningModule):
 
     def _validate_second(self, batch, batch_idx):
         device = self.device
-        try:
-            waves = batch[0]
-            texts, input_lengths, _, _, mels, mel_input_length, _ = [
-                b.to(device) for b in batch[1:]]
+        waves = batch[0]
+        texts, input_lengths, _, _, mels, mel_input_length, ref_mels = [
+            b.to(device) for b in batch[1:]]
 
-            mask = length_to_mask(mel_input_length // (2 ** self.n_down)).to(device)
-            text_mask = length_to_mask(input_lengths).to(device)
+        mask = length_to_mask(mel_input_length // (2 ** self.n_down)).to(device)
+        text_mask = length_to_mask(input_lengths).to(device)
 
-            _, _, s2s_attn = self.text_aligner(mels, mask, texts)
-            s2s_attn = s2s_attn.transpose(-1, -2)[..., 1:].transpose(-1, -2)
-            mask_ST = mask_from_lens(
-                s2s_attn, input_lengths, mel_input_length // (2 ** self.n_down))
-            s2s_attn_mono = maximum_path(s2s_attn, mask_ST)
+        _, _, s2s_attn = self.text_aligner(mels, mask, texts)
+        s2s_attn = s2s_attn.transpose(-1, -2)[..., 1:].transpose(-1, -2)
+        mask_ST = mask_from_lens(
+            s2s_attn, input_lengths, mel_input_length // (2 ** self.n_down))
+        s2s_attn_mono = maximum_path(s2s_attn, mask_ST)
 
-            t_en = self.text_encoder(texts, input_lengths, text_mask)
-            asr = t_en @ s2s_attn_mono
-            d_gt = s2s_attn_mono.sum(axis=-1).detach()
+        t_en = self.text_encoder(texts, input_lengths, text_mask)
+        asr = t_en @ s2s_attn_mono
+        d_gt = s2s_attn_mono.sum(axis=-1).detach()
 
-            ss, gs = [], []
-            for bib in range(len(mel_input_length)):
-                mel = mels[bib, :, :mel_input_length[bib]]
-                ss.append(self.predictor_encoder(mel.unsqueeze(0).unsqueeze(1)))
-                gs.append(self.style_encoder(mel.unsqueeze(0).unsqueeze(1)))
-            s_dur = torch.stack(ss).squeeze()
+        ss, gs = [], []
+        for bib in range(len(mel_input_length)):
+            mel = mels[bib, :, :mel_input_length[bib]]
+            ss.append(self.predictor_encoder(mel.unsqueeze(0).unsqueeze(1)))
+            gs.append(self.style_encoder(mel.unsqueeze(0).unsqueeze(1)))
+        s_dur = torch.stack(ss).squeeze()
 
-            bert_dur = self.bert(texts, attention_mask=(~text_mask).int())
-            d_en = self.bert_encoder(bert_dur).transpose(-1, -2)
-            d, p = self.predictor(d_en, s_dur, input_lengths, s2s_attn_mono, text_mask)
+        bert_dur = self.bert(texts, attention_mask=(~text_mask).int())
+        d_en = self.bert_encoder(bert_dur).transpose(-1, -2)
+        d, p = self.predictor(d_en, s_dur, input_lengths, s2s_attn_mono, text_mask)
 
-            mel_len = int(mel_input_length.min().item() / 2 - 1)
-            clips = self._get_clips(asr, mels, mel_input_length, waves, mel_len, p=p)
-            en, gt, wav, p_en = clips
+        mel_len = int(mel_input_length.min().item() / 2 - 1)
+        clips = self._get_clips(asr, mels, mel_input_length, waves, mel_len, p=p)
+        en, gt, wav, p_en = clips
 
-            s = self.predictor_encoder(gt.unsqueeze(1))
-            F0_fake, N_fake = self.predictor.F0Ntrain(p_en, s)
+        s = self.predictor_encoder(gt.unsqueeze(1))
+        F0_fake, N_fake = self.predictor.F0Ntrain(p_en, s)
 
-            loss_dur = torch.tensor(0.0, device=device)
-            for _pred, _text, _length in zip(d, d_gt, input_lengths):
-                _pred = _pred[:_length, :]
-                _text = _text[:_length].long()
-                _trg = torch.zeros_like(_pred)
-                for bib in range(_trg.shape[0]):
-                    _trg[bib, :_text[bib]] = 1
-                _dur_pred = torch.sigmoid(_pred).sum(axis=1)
-                loss_dur = loss_dur + F.l1_loss(
-                    _dur_pred[1:_length - 1], _text[1:_length - 1])
-            loss_dur = loss_dur / texts.size(0)
+        loss_dur = torch.tensor(0.0, device=device)
+        for _pred, _text, _length in zip(d, d_gt, input_lengths):
+            _pred = _pred[:_length, :]
+            _text = _text[:_length].long()
+            _trg = torch.zeros_like(_pred)
+            for bib in range(_trg.shape[0]):
+                _trg[bib, :_text[bib]] = 1
+            _dur_pred = torch.sigmoid(_pred).sum(axis=1)
+            loss_dur = loss_dur + F.l1_loss(
+                _dur_pred[1:_length - 1], _text[1:_length - 1])
+        loss_dur = loss_dur / texts.size(0)
 
-            s = self.style_encoder(gt.unsqueeze(1))
-            y_rec = self.decoder(en, F0_fake, N_fake, s)
-            loss_mel = self.stft_loss(y_rec.squeeze(), wav)
-            F0_real, _, _ = self.pitch_extractor(gt.unsqueeze(1))
-            loss_F0 = F.l1_loss(F0_real, F0_fake) / 10
+        s = self.style_encoder(gt.unsqueeze(1))
+        y_rec = self.decoder(en, F0_fake, N_fake, s)
+        loss_mel = self.stft_loss(y_rec.squeeze(), wav)
+        F0_real, _, _ = self.pitch_extractor(gt.unsqueeze(1))
+        loss_F0 = F.l1_loss(F0_real, F0_fake) / 10
 
-            self.log_dict({
-                'val/mel': loss_mel,
-                'val/dur': loss_dur,
-                'val/F0': loss_F0,
-            }, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+        self.log_dict({
+            'val/mel': loss_mel,
+            'val/dur': loss_dur,
+            'val/F0': loss_F0,
+        }, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
 
-            if self.trainer.is_global_zero:
-                self._val_batch = dict(
-                    asr=asr.detach().cpu(),
-                    mels=mels.detach().cpu(),
-                    mel_input_length=mel_input_length.detach().cpu(),
-                    waves=waves,
-                    p=p.detach().cpu(),
-                    d_en=d_en.detach().cpu(),
-                    bert_dur=bert_dur.detach().cpu(),
-                    texts=texts.detach().cpu(),
-                    input_lengths=input_lengths.detach().cpu(),
-                    text_mask=text_mask.detach().cpu(),
-                    ref_mels=ref_mels.detach().cpu() if self.multispeaker else None,
-                )
-
-        except Exception as e:
-            pass
+        if self.trainer.is_global_zero:
+            self._val_batch = dict(
+                asr=asr.detach().cpu(),
+                mels=mels.detach().cpu(),
+                mel_input_length=mel_input_length.detach().cpu(),
+                waves=waves,
+                p=p.detach().cpu(),
+                d_en=d_en.detach().cpu(),
+                bert_dur=bert_dur.detach().cpu(),
+                texts=texts.detach().cpu(),
+                input_lengths=input_lengths.detach().cpu(),
+                text_mask=text_mask.detach().cpu(),
+                ref_mels=ref_mels.detach().cpu() if self.multispeaker else None,
+            )
