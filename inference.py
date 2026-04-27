@@ -1,11 +1,13 @@
 import os
 import sys
+from enum import Enum
 from pathlib import Path
+from typing import Annotated, Optional
 
-import click
 import soundfile as sf
 import torch
 import torchaudio
+import typer
 import yaml
 
 from styletts2.lightning import StyleTTS2Module
@@ -20,6 +22,12 @@ except ImportError:
 
 _text_cleaner = TextCleaner()
 _MEL_MEAN, _MEL_STD = -4, 4
+
+
+class Mode(str, Enum):
+    first = 'first'
+    second = 'second'
+    finetune = 'finetune'
 
 
 def _make_mel_transform(config):
@@ -126,46 +134,46 @@ def synthesize(module, to_mel, text, device, reference_path=None,
     return out.cpu().numpy().squeeze()
 
 
-@click.command()
-@click.option('-c', '--config', 'config_path', required=True, type=click.Path(exists=True),
-              help='YAML config used for training.')
-@click.option('-k', '--checkpoint', required=True, type=click.Path(exists=True),
-              help='Lightning .ckpt checkpoint file.')
-@click.option('-t', '--text', default=None,
-              help='Text to synthesize. Required if --input-file is not given.')
-@click.option('-f', '--input-file', 'input_file', default=None, type=click.Path(exists=True),
-              help='PSV file with filename|text columns (one utterance per line).')
-@click.option('-r', '--reference', default=None, type=click.Path(exists=True),
-              help='Reference audio for speaker style (multispeaker models).')
-@click.option('-o', '--output-dir', 'output_dir', default='.', show_default=True,
-              help='Directory to write output WAV files.')
-@click.option('--phonemize', 'do_phonemize', is_flag=True, default=False,
-              help='Run espeak phonemization on input text before synthesis.')
-@click.option('--language', default='en-us', show_default=True,
-              help='espeak language code, used with --phonemize.')
-@click.option('--mode', default='second', show_default=True,
-              type=click.Choice(['first', 'second', 'finetune']),
-              help='Training mode the checkpoint was produced by.')
-@click.option('--device', default=None,
-              help='Device (cuda, cpu). Auto-selects cuda if available.')
-@click.option('--diffusion-steps', 'diffusion_steps', default=5, show_default=True, type=int,
-              help='Number of diffusion sampling steps.')
-@click.option('--embedding-scale', 'embedding_scale', default=1.0, show_default=True, type=float,
-              help='Classifier-free guidance scale for diffusion.')
-def main(config_path, checkpoint, text, input_file, reference, output_dir,
-         do_phonemize, language, mode, device, diffusion_steps, embedding_scale):
+def main(
+    config_path: Annotated[Path, typer.Option('-c', '--config',
+        exists=True, help='YAML config used for training.')],
+    checkpoint: Annotated[Path, typer.Option('-k', '--checkpoint',
+        exists=True, help='Lightning .ckpt checkpoint file.')],
+    text: Annotated[Optional[str], typer.Option('-t', '--text',
+        help='Text to synthesize. Required if --input-file is not given.')] = None,
+    input_file: Annotated[Optional[Path], typer.Option('-f', '--input-file',
+        exists=True, help='PSV file with filename|text columns.')] = None,
+    reference: Annotated[Optional[Path], typer.Option('-r', '--reference',
+        exists=True, help='Reference audio for speaker style (multispeaker models).')] = None,
+    output_dir: Annotated[Path, typer.Option('-o', '--output-dir',
+        help='Directory to write output WAV files.')] = Path('.'),
+    do_phonemize: Annotated[bool, typer.Option('--phonemize',
+        help='Run espeak phonemization on input text before synthesis.')] = False,
+    language: Annotated[str, typer.Option(
+        help='espeak language code, used with --phonemize.')] = 'en-us',
+    mode: Annotated[Mode, typer.Option(
+        help='Training mode the checkpoint was produced by.')] = Mode.second,
+    device: Annotated[Optional[str], typer.Option(
+        help='Device (cuda, cpu). Auto-selects cuda if available.')] = None,
+    diffusion_steps: Annotated[int, typer.Option(
+        help='Number of diffusion sampling steps.')] = 5,
+    embedding_scale: Annotated[float, typer.Option(
+        help='Classifier-free guidance scale for diffusion.')] = 1.0,
+):
     if text is None and input_file is None:
-        raise click.UsageError("Provide either --text or --input-file.")
+        typer.echo("Error: provide either --text or --input-file.", err=True)
+        raise typer.Exit(code=1)
     if text is not None and input_file is not None:
-        raise click.UsageError("--text and --input-file are mutually exclusive.")
+        typer.echo("Error: --text and --input-file are mutually exclusive.", err=True)
+        raise typer.Exit(code=1)
 
     if device is None:
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     os.makedirs(output_dir, exist_ok=True)
 
-    print(f'Loading model from {checkpoint} …')
-    module, to_mel = load_model(config_path, checkpoint, mode=mode, device=device)
+    typer.echo(f'Loading model from {checkpoint} …')
+    module, to_mel = load_model(config_path, checkpoint, mode=mode.value, device=device)
 
     if input_file:
         rows = []
@@ -176,7 +184,7 @@ def main(config_path, checkpoint, text, input_file, reference, output_dir,
                     continue
                 parts = line.split('|')
                 if len(parts) < 2:
-                    print(f'Skipping malformed line: {line!r}', file=sys.stderr)
+                    typer.echo(f'Skipping malformed line: {line!r}', err=True)
                     continue
                 rows.append((parts[0], parts[1]))
     else:
@@ -186,7 +194,7 @@ def main(config_path, checkpoint, text, input_file, reference, output_dir,
         if do_phonemize:
             raw_text = _phonemize(raw_text, language)
         if not raw_text.strip():
-            print(f'Skipping empty text for {stem!r}', file=sys.stderr)
+            typer.echo(f'Skipping empty text for {stem!r}', err=True)
             continue
 
         audio = synthesize(module, to_mel, raw_text, device,
@@ -196,8 +204,8 @@ def main(config_path, checkpoint, text, input_file, reference, output_dir,
 
         out_path = os.path.join(output_dir, Path(stem).stem + '.wav')
         sf.write(out_path, audio, module.sr)
-        print(f'Wrote {out_path}')
+        typer.echo(f'Wrote {out_path}')
 
 
 if __name__ == '__main__':
-    main()
+    typer.run(main)

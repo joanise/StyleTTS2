@@ -26,7 +26,7 @@ dependencies = [
     "scipy",
     "numpy",
     "pandas",
-    "click",
+    "typer>=0.9",
     "typing-extensions",
     "monotonic-align",
     # temporary: used by scripts/train_first.py until Lightning migration
