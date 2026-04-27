@@ -32,6 +32,7 @@ dependencies = [
     # temporary: used by scripts/train_first.py until Lightning migration
     "accelerate",
     "tensorboard>=2.20.0",
+    "torchcodec>=0.9.1",
 ]
 
 [project.optional-dependencies]

@@ -1,5 +1,4 @@
 import os
-import sys
 from enum import Enum
 from pathlib import Path
 from typing import Annotated, Optional
@@ -53,12 +52,13 @@ def _phonemize(text, language):
     return result[0] if result else ''
 
 
-def _load_reference_mel(path, target_sr, to_mel):
+def _load_reference_mel(path, target_sr, mel_transform):
     wave, sr = torchaudio.load(path)
     wave = wave.mean(0)
     if sr != target_sr:
         wave = torchaudio.functional.resample(wave, sr, target_sr)
-    mel = to_mel(wave)
+    wave = wave.to(next(mel_transform.buffers()).device)
+    mel = mel_transform(wave)
     mel = (torch.log(1e-5 + mel.unsqueeze(0)) - _MEL_MEAN) / _MEL_STD
     return mel  # [1, n_mels, T]
 
@@ -70,12 +70,12 @@ def load_model(config_path, checkpoint_path, mode, device):
     module.load_state_dict(state['state_dict'])
     module.eval()
     module.to(device)
-    to_mel = _make_mel_transform(config).to(device)
-    return module, to_mel
+    mel_transform = _make_mel_transform(config).to(device)
+    return module, mel_transform
 
 
 @torch.no_grad()
-def synthesize(module, to_mel, text, device, reference_path=None,
+def synthesize(module, mel_transform, text, device, reference_path=None,
                diffusion_steps=5, embedding_scale=1.0):
     tokens = torch.LongTensor(_text_cleaner(text)).unsqueeze(0).to(device)
     if tokens.numel() == 0:
@@ -90,7 +90,7 @@ def synthesize(module, to_mel, text, device, reference_path=None,
 
     ref_s = None
     if reference_path is not None:
-        ref_mel = _load_reference_mel(reference_path, module.sr, to_mel).to(device)
+        ref_mel = _load_reference_mel(reference_path, module.sr, mel_transform).to(device)
         ref_ss = module.style_encoder(ref_mel.unsqueeze(1))
         ref_sp = module.predictor_encoder(ref_mel.unsqueeze(1))
         ref_s = torch.cat([ref_ss, ref_sp], dim=1)
@@ -173,7 +173,7 @@ def main(
     os.makedirs(output_dir, exist_ok=True)
 
     typer.echo(f'Loading model from {checkpoint} …')
-    module, to_mel = load_model(config_path, checkpoint, mode=mode.value, device=device)
+    module, mel_transform = load_model(config_path, checkpoint, mode=mode.value, device=device)
 
     if input_file:
         rows = []
@@ -197,7 +197,7 @@ def main(
             typer.echo(f'Skipping empty text for {stem!r}', err=True)
             continue
 
-        audio = synthesize(module, to_mel, raw_text, device,
+        audio = synthesize(module, mel_transform, raw_text, device,
                            reference_path=reference,
                            diffusion_steps=diffusion_steps,
                            embedding_scale=embedding_scale)
