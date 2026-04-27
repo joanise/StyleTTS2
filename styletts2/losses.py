@@ -195,8 +195,16 @@ class WavLMLoss(torch.nn.Module):
     def __init__(self, model, wd, model_sr, slm_sr=16000):
         super(WavLMLoss, self).__init__()
         self.wavlm = AutoModel.from_pretrained(model)
+        self.wavlm.requires_grad_(False)
         self.wd = wd
         self.resample = torchaudio.transforms.Resample(model_sr, slm_sr)
+
+    def train(self, mode=True):
+        super().train(mode)
+        # WavLM is a fixed feature extractor — keep it in eval regardless of
+        # the training mode set by the Lightning trainer on the parent module.
+        self.wavlm.eval()
+        return self
      
     def forward(self, wav, y_rec):
         with torch.no_grad():
