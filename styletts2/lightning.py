@@ -160,8 +160,6 @@ class StyleTTS2Module(L.LightningModule):
                         if sub_sd:
                             getattr(self, key).load_state_dict(sub_sd, strict=False)
                             print(f'{key} loaded')
-                    for key in self._net_keys:
-                        getattr(self, key).eval()
                 else:
                     # Legacy format (original train_first.py checkpoints)
                     load_checkpoint(
@@ -171,6 +169,10 @@ class StyleTTS2Module(L.LightningModule):
                         ignore_modules=list(_ignore),
                     )
                 self.predictor_encoder = copy.deepcopy(self.style_encoder)
+                # load_checkpoint (legacy path) calls .eval() on all networks;
+                # reset to train mode so trainable RNN layers (predictor etc.)
+                # can backpropagate correctly.
+                self.train()
             else:
                 raise FileNotFoundError(
                     f"first_stage_path not found: {first_stage_path}. "
@@ -549,7 +551,7 @@ class StyleTTS2Module(L.LightningModule):
             d_gt = s2s_attn_mono.sum(axis=-1).detach()
 
             ref = None
-            if self.multispeaker and epoch >= self.diff_epoch:
+            if self.multispeaker:
                 ref_ss = self.style_encoder(ref_mels.unsqueeze(1))
                 ref_sp = self.predictor_encoder(ref_mels.unsqueeze(1))
                 ref = torch.cat([ref_ss, ref_sp], dim=1)
@@ -595,8 +597,12 @@ class StyleTTS2Module(L.LightningModule):
         else:
             # Zero-weight forward keeps diffusion in DDP sync graph before
             # diff_epoch without running the expensive sampler.
-            loss_diff = 0.0 * self.diffusion.diffusion(
-                s_trg.unsqueeze(1), embedding=bert_dur).mean()
+            if self.multispeaker:
+                loss_diff = 0.0 * self.diffusion.diffusion(
+                    s_trg.unsqueeze(1), embedding=bert_dur, features=ref).mean()
+            else:
+                loss_diff = 0.0 * self.diffusion.diffusion(
+                    s_trg.unsqueeze(1), embedding=bert_dur).mean()
             loss_sty = 0.0
 
         d, p = self.predictor(d_en, s_dur, input_lengths, s2s_attn_mono, text_mask)
