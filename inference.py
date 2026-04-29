@@ -75,8 +75,9 @@ def load_model(config_path, checkpoint_path, mode, device):
 
 
 @torch.no_grad()
-def synthesize(module, mel_transform, text, device, reference_path=None,
-               diffusion_steps=5, embedding_scale=1.0):
+def synthesize(module, mel_transform, text, device, reference_path,
+               diffusion_steps=5, embedding_scale=1.0,
+               acoustic_blend=0.3, prosody_blend=0.7):
     tokens = torch.LongTensor(_text_cleaner(text)).unsqueeze(0).to(device)
     if tokens.numel() == 0:
         raise ValueError(f"Text produced no tokens: {text!r}")
@@ -88,26 +89,22 @@ def synthesize(module, mel_transform, text, device, reference_path=None,
     d_en = module.bert_encoder(bert_dur).transpose(-1, -2)
     t_en = module.text_encoder(tokens, input_lengths, text_mask)
 
-    ref_s = None
-    if reference_path is not None:
-        ref_mel = _load_reference_mel(reference_path, module.sr, mel_transform).to(device)
-        ref_ss = module.style_encoder(ref_mel.unsqueeze(1))
-        ref_sp = module.predictor_encoder(ref_mel.unsqueeze(1))
-        ref_s = torch.cat([ref_ss, ref_sp], dim=1)
+    ref_mel = _load_reference_mel(reference_path, module.sr, mel_transform).to(device)
+    ref_ss = module.style_encoder(ref_mel.unsqueeze(1))
+    ref_sp = module.predictor_encoder(ref_mel.unsqueeze(1))
+    ref_s = torch.cat([ref_ss, ref_sp], dim=1)
 
     noise = torch.randn((1, 256), device=device).unsqueeze(1)
-    sampler_kwargs = dict(
+    s_pred = module._sampler(
         noise=noise,
         embedding=bert_dur,
         embedding_scale=embedding_scale,
         num_steps=diffusion_steps,
-    )
-    if ref_s is not None:
-        sampler_kwargs['features'] = ref_s
-    s_pred = module._sampler(**sampler_kwargs).squeeze(1)
+        features=ref_s,
+    ).squeeze(1)
 
-    s = s_pred[:, 128:]
-    ref = s_pred[:, :128]
+    ref = acoustic_blend * s_pred[:, :128] + (1 - acoustic_blend) * ref_s[:, :128]
+    s = prosody_blend * s_pred[:, 128:] + (1 - prosody_blend) * ref_s[:, 128:]
 
     T = input_lengths[0].item()
     tm = text_mask[0, :T].unsqueeze(0)
@@ -139,12 +136,12 @@ def main(
         exists=True, help='YAML config used for training.')],
     checkpoint: Annotated[Path, typer.Option('-k', '--checkpoint',
         exists=True, help='Lightning .ckpt checkpoint file.')],
+    reference: Annotated[Path, typer.Option('-r', '--reference',
+        exists=True, help='Reference audio for speaker style.')],
     text: Annotated[Optional[str], typer.Option('-t', '--text',
         help='Text to synthesize. Required if --input-file is not given.')] = None,
     input_file: Annotated[Optional[Path], typer.Option('-f', '--input-file',
         exists=True, help='PSV file with filename|text columns.')] = None,
-    reference: Annotated[Optional[Path], typer.Option('-r', '--reference',
-        exists=True, help='Reference audio for speaker style (multispeaker models).')] = None,
     output_dir: Annotated[Path, typer.Option('-o', '--output-dir',
         help='Directory to write output WAV files.')] = Path('.'),
     do_phonemize: Annotated[bool, typer.Option('--phonemize',
@@ -159,6 +156,14 @@ def main(
         help='Number of diffusion sampling steps.')] = 5,
     embedding_scale: Annotated[float, typer.Option(
         help='Classifier-free guidance scale for diffusion.')] = 1.0,
+    acoustic_blend: Annotated[float, typer.Option(
+        help='Blend weight for the acoustic style embedding (controls voice timbre and quality). '
+             '1.0 uses the diffusion sample only; 0.0 uses the reference audio encoding directly. '
+             'Lower values may reduce artefacts.')] = 0.3,
+    prosody_blend: Annotated[float, typer.Option(
+        help='Blend weight for the prosody style embedding (controls pitch and duration). '
+             '1.0 uses the diffusion sample only; 0.0 uses the reference audio encoding directly. '
+             'Lower values may stabilise F0 and duration prediction, while higher values may condition better on the input text.')] = 0.7,
 ):
     if text is None and input_file is None:
         typer.echo("Error: provide either --text or --input-file.", err=True)
@@ -200,7 +205,9 @@ def main(
         audio = synthesize(module, mel_transform, raw_text, device,
                            reference_path=reference,
                            diffusion_steps=diffusion_steps,
-                           embedding_scale=embedding_scale)
+                           embedding_scale=embedding_scale,
+                           acoustic_blend=acoustic_blend,
+                           prosody_blend=prosody_blend)
 
         out_path = os.path.join(output_dir, Path(stem).stem + '.wav')
         sf.write(out_path, audio, module.sr)

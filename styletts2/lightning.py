@@ -707,7 +707,7 @@ class StyleTTS2Module(L.LightningModule):
             rt = texts if use_ind else ref_texts
             rl = input_lengths if use_ind else ref_lengths
 
-            slm_out = self._slmadv(
+            slm_out = self._slmadv.forward(
                 batch_idx, y_rec_gt, y_rec_gt_pred, waves,
                 mel_input_length, rt, rl, use_ind,
                 s_trg.detach(), ref if self.multispeaker else None,
