@@ -4,6 +4,8 @@ import torch.nn.functional as F
 import torchaudio
 from transformers import AutoModel
 
+from .utils import MEL_MEAN, MEL_STD
+
 class SpectralConvergengeLoss(torch.nn.Module):
     """Spectral convergence loss module."""
 
@@ -24,13 +26,13 @@ class SpectralConvergengeLoss(torch.nn.Module):
 class STFTLoss(torch.nn.Module):
     """STFT loss module."""
 
-    def __init__(self, fft_size=1024, shift_size=120, win_length=600, window=torch.hann_window):
+    def __init__(self, fft_size=1024, shift_size=120, win_length=600, window=torch.hann_window, sample_rate=24000):
         """Initialize STFT loss module."""
         super(STFTLoss, self).__init__()
         self.fft_size = fft_size
         self.shift_size = shift_size
         self.win_length = win_length
-        self.to_mel = torchaudio.transforms.MelSpectrogram(sample_rate=24000, n_fft=fft_size, win_length=win_length, hop_length=shift_size, window_fn=window)
+        self.to_mel = torchaudio.transforms.MelSpectrogram(sample_rate=sample_rate, n_fft=fft_size, win_length=win_length, hop_length=shift_size, window_fn=window)
 
         self.spectral_convergenge_loss = SpectralConvergengeLoss()
 
@@ -43,13 +45,8 @@ class STFTLoss(torch.nn.Module):
             Tensor: Spectral convergence loss value.
             Tensor: Log STFT magnitude loss value.
         """
-        x_mag = self.to_mel(x)
-        mean, std = -4, 4
-        x_mag = (torch.log(1e-5 + x_mag) - mean) / std
-        
-        y_mag = self.to_mel(y)
-        mean, std = -4, 4
-        y_mag = (torch.log(1e-5 + y_mag) - mean) / std
+        x_mag = (torch.log(1e-5 + self.to_mel(x)) - MEL_MEAN) / MEL_STD
+        y_mag = (torch.log(1e-5 + self.to_mel(y)) - MEL_MEAN) / MEL_STD
         
         sc_loss = self.spectral_convergenge_loss(x_mag, y_mag)    
         return sc_loss
@@ -62,7 +59,8 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
                  fft_sizes=[1024, 2048, 512],
                  hop_sizes=[120, 240, 50],
                  win_lengths=[600, 1200, 240],
-                 window=torch.hann_window):
+                 window=torch.hann_window,
+                 sample_rate=24000):
         """Initialize Multi resolution STFT loss module.
         Args:
             fft_sizes (list): List of FFT sizes.
@@ -74,7 +72,7 @@ class MultiResolutionSTFTLoss(torch.nn.Module):
         assert len(fft_sizes) == len(hop_sizes) == len(win_lengths)
         self.stft_losses = torch.nn.ModuleList()
         for fs, ss, wl in zip(fft_sizes, hop_sizes, win_lengths):
-            self.stft_losses += [STFTLoss(fs, ss, wl, window)]
+            self.stft_losses += [STFTLoss(fs, ss, wl, window, sample_rate=sample_rate)]
 
     def forward(self, x, y):
         """Calculate forward propagation.

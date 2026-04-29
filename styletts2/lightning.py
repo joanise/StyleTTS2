@@ -40,7 +40,7 @@ class StyleTTS2DataModule(L.LightningDataModule):
     def train_dataloader(self):
         dp = self.config['data_params']
         return build_dataloader(
-            self.train_list, dp['root_path'],
+            self.train_list, dp['root_path'], self.config,
             OOD_data=dp['OOD_data'], min_length=dp['min_length'],
             batch_size=self.config.get('batch_size', 16), num_workers=2,
         )
@@ -48,7 +48,7 @@ class StyleTTS2DataModule(L.LightningDataModule):
     def val_dataloader(self):
         dp = self.config['data_params']
         return build_dataloader(
-            self.val_list, dp['root_path'],
+            self.val_list, dp['root_path'], self.config,
             OOD_data=dp['OOD_data'], min_length=dp['min_length'],
             batch_size=self.config.get('batch_size', 16),
             validation=True, num_workers=0,
@@ -102,7 +102,7 @@ class StyleTTS2Module(L.LightningModule):
         self.n_down = text_aligner.n_down
 
         # Loss modules (registered as attributes → DDP-tracked)
-        self.stft_loss = MultiResolutionSTFTLoss()
+        self.stft_loss = MultiResolutionSTFTLoss(sample_rate=self.sr)
         self.gl = GeneratorLoss(self.mpd, self.msd)
         self.dl = DiscriminatorLoss(self.mpd, self.msd)
         self.wl = WavLMLoss(model_params.slm.model, self.wd, self.sr, model_params.slm.sr)

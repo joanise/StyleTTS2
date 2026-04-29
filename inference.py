@@ -11,7 +11,7 @@ import yaml
 
 from styletts2.lightning import StyleTTS2Module
 from styletts2.text_utils import TextCleaner
-from styletts2.utils import length_to_mask
+from styletts2.utils import MEL_MEAN, MEL_STD, length_to_mask, make_mel_transform
 
 try:
     from phonemizer.backend import EspeakBackend
@@ -20,25 +20,12 @@ except ImportError:
     _HAS_PHONEMIZER = False
 
 _text_cleaner = TextCleaner()
-_MEL_MEAN, _MEL_STD = -4, 4
 
 
 class Mode(str, Enum):
     first = 'first'
     second = 'second'
     finetune = 'finetune'
-
-
-def _make_mel_transform(config):
-    pp = config['preprocess_params']
-    sp = pp.get('spect_params', {})
-    mp = pp.get('mel_params', {})
-    return torchaudio.transforms.MelSpectrogram(
-        n_mels=mp.get('n_mels', 80),
-        n_fft=sp.get('n_fft', 2048),
-        win_length=sp.get('win_length', 1200),
-        hop_length=sp.get('hop_length', 300),
-    )
 
 
 def _phonemize(text, language):
@@ -59,7 +46,7 @@ def _load_reference_mel(path, target_sr, mel_transform):
         wave = torchaudio.functional.resample(wave, sr, target_sr)
     wave = wave.to(next(mel_transform.buffers()).device)
     mel = mel_transform(wave)
-    mel = (torch.log(1e-5 + mel.unsqueeze(0)) - _MEL_MEAN) / _MEL_STD
+    mel = (torch.log(1e-5 + mel.unsqueeze(0)) - MEL_MEAN) / MEL_STD
     return mel  # [1, n_mels, T]
 
 
@@ -70,7 +57,7 @@ def load_model(config_path, checkpoint_path, mode, device):
     module.load_state_dict(state['state_dict'])
     module.eval()
     module.to(device)
-    mel_transform = _make_mel_transform(config).to(device)
+    mel_transform = make_mel_transform(config).to(device)
     return module, mel_transform
 
 

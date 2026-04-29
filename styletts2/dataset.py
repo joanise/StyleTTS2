@@ -13,56 +13,37 @@ import logging
 import pandas as pd
 
 from .text_utils import TextCleaner
+from .utils import MEL_MEAN, MEL_STD, make_mel_transform
 
 logger = logging.getLogger(__name__)
 
 np.random.seed(1)
 random.seed(1)
-SPECT_PARAMS = {
-    "n_fft": 2048,
-    "win_length": 1200,
-    "hop_length": 300
-}
-MEL_PARAMS = {
-    "n_mels": 80,
-}
-
-to_mel = torchaudio.transforms.MelSpectrogram(
-    n_mels=80, n_fft=2048, win_length=1200, hop_length=300)
-mean, std = -4, 4
-
-def preprocess(wave):
-    wave_tensor = torch.from_numpy(wave).float()
-    mel_tensor = to_mel(wave_tensor)
-    mel_tensor = (torch.log(1e-5 + mel_tensor.unsqueeze(0)) - mean) / std
-    return mel_tensor
 
 class FilePathDataset(torch.utils.data.Dataset):
     def __init__(self,
                  data_list,
                  root_path,
-                 sr=24000,
+                 config,
                  data_augmentation=False,
                  validation=False,
                  OOD_data="data/OOD_texts.txt",
                  min_length=50,
                  ):
 
-        spect_params = SPECT_PARAMS
-        mel_params = MEL_PARAMS
-
+        pp = config['preprocess_params']
         _data_list = [l.strip().split('|') for l in data_list]
         self.data_list = [data if len(data) == 3 else (*data, 0) for data in _data_list]
         self.text_cleaner = TextCleaner()
-        self.sr = sr
+        self.sr = pp.get('sr', 24000)
 
         self.df = pd.DataFrame(self.data_list)
 
-        self.to_melspec = torchaudio.transforms.MelSpectrogram(**MEL_PARAMS)
-
-        self.mean, self.std = -4, 4
+        self.to_mel = make_mel_transform(config)
+        self.mel_mean, self.mel_std = MEL_MEAN, MEL_STD
         self.data_augmentation = data_augmentation and (not validation)
-        self.max_mel_length = 192
+        self.max_mel_length = pp.get('max_mel_length', 192)
+        self.silence_pad_samples = pp.get('silence_pad_samples', 5000)
         
         self.min_length = min_length
         with open(OOD_data, 'r', encoding='utf-8') as f:
@@ -80,8 +61,8 @@ class FilePathDataset(torch.utils.data.Dataset):
         path = data[0]
         
         wave, text_tensor, speaker_id = self._load_tensor(data)
-        
-        mel_tensor = preprocess(wave).squeeze()
+
+        mel_tensor = self._preprocess(wave).squeeze()
         
         acoustic_feature = mel_tensor.squeeze()
         length_feature = acoustic_feature.size(1)
@@ -113,11 +94,12 @@ class FilePathDataset(torch.utils.data.Dataset):
         wave, sr = sf.read(osp.join(self.root_path, wave_path))
         if wave.shape[-1] == 2:
             wave = wave[:, 0].squeeze()
-        if sr != 24000:
-            wave = librosa.resample(wave, orig_sr=sr, target_sr=24000)
+        if sr != self.sr:
+            wave = librosa.resample(wave, orig_sr=sr, target_sr=self.sr)
             print(wave_path, sr)
-            
-        wave = np.concatenate([np.zeros([5000]), wave, np.zeros([5000])], axis=0)
+
+        pad = np.zeros([self.silence_pad_samples])
+        wave = np.concatenate([pad, wave, pad], axis=0)
         
         text = self.text_cleaner(text)
         
@@ -128,9 +110,14 @@ class FilePathDataset(torch.utils.data.Dataset):
 
         return wave, text, speaker_id
 
+    def _preprocess(self, wave):
+        wave_tensor = torch.from_numpy(wave).float()
+        mel_tensor = self.to_mel(wave_tensor)
+        return (torch.log(1e-5 + mel_tensor.unsqueeze(0)) - self.mel_mean) / self.mel_std
+
     def _load_data(self, data):
         wave, text_tensor, speaker_id = self._load_tensor(data)
-        mel_tensor = preprocess(wave).squeeze()
+        mel_tensor = self._preprocess(wave).squeeze()
 
         mel_length = mel_tensor.size(1)
         if mel_length > self.max_mel_length:
@@ -146,10 +133,9 @@ class Collater(object):
       adaptive_batch_size (bool): if true, decrease batch size when long data comes.
     """
 
-    def __init__(self, return_wave=False):
+    def __init__(self, max_mel_length=192, return_wave=False):
         self.text_pad_index = 0
-        self.min_mel_length = 192
-        self.max_mel_length = 192
+        self.max_mel_length = max_mel_length
         self.return_wave = return_wave
         
 
@@ -204,6 +190,7 @@ class Collater(object):
 
 def build_dataloader(path_list,
                      root_path,
+                     config,
                      validation=False,
                      OOD_data="data/OOD_texts.txt",
                      min_length=50,
@@ -212,9 +199,10 @@ def build_dataloader(path_list,
                      device='cpu',
                      collate_config={},
                      dataset_config={}):
-    
-    dataset = FilePathDataset(path_list, root_path, OOD_data=OOD_data, min_length=min_length, validation=validation, **dataset_config)
-    collate_fn = Collater(**collate_config)
+
+    max_mel_length = config['preprocess_params'].get('max_mel_length', 192)
+    dataset = FilePathDataset(path_list, root_path, config, OOD_data=OOD_data, min_length=min_length, validation=validation, **dataset_config)
+    collate_fn = Collater(max_mel_length=max_mel_length, **collate_config)
     data_loader = DataLoader(dataset,
                              batch_size=batch_size,
                              shuffle=(not validation),

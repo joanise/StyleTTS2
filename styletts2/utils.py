@@ -10,6 +10,21 @@ import librosa
 import matplotlib.pyplot as plt
 from munch import Munch
 
+MEL_MEAN = -4.0
+MEL_STD = 4.0
+
+
+def make_mel_transform(config):
+    pp = config['preprocess_params']
+    sp = pp.get('spect_params', {})
+    mp = pp.get('mel_params', {})
+    return torchaudio.transforms.MelSpectrogram(
+        n_mels=mp.get('n_mels', 80),
+        n_fft=sp.get('n_fft', 2048),
+        win_length=sp.get('win_length', 1200),
+        hop_length=sp.get('hop_length', 300),
+    )
+
 def maximum_path(neg_cent, mask):
   """ Cython optimized version.
   neg_cent: [b, t_t, t_s]
