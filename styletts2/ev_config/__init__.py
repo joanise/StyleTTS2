@@ -9,6 +9,7 @@ from everyvoice.config.shared_types import (
     init_context,
 )
 from everyvoice.config.text_config import TextConfig
+from everyvoice.config.type_definitions import TargetTrainingTextRepresentationLevel
 from everyvoice.config.utils import PossiblyRelativePath, load_partials
 from everyvoice.model.vocoder.HiFiGAN_iSTFT_lightning.hfgl.config import (
     HiFiGANModelConfig,
@@ -17,6 +18,14 @@ from everyvoice.utils import load_config_from_json_or_yaml_path
 from pydantic import Field, FilePath, ValidationInfo, model_validator
 
 LATEST_VERSION: str = "0.1"
+
+
+def _default_pretrained_symbols() -> list[str]:
+    """Return the symbol list bundled with the pretrained StyleTTS2 text encoder."""
+    from styletts2.text_utils import (
+        symbols,
+    )
+    return list(symbols)
 
 
 # ---------------------------------------------------------------------------
@@ -42,6 +51,14 @@ class StyleTTS2PretrainedConfig(ConfigModel):
     plbert_dir: PossiblyRelativePath = Field(
         default=Path("styletts2/pretrained/plbert"),
         description="Directory containing the PLBERT checkpoint and config.",
+    )
+    pretrained_symbols: list[str] = Field(
+        default_factory=lambda: _default_pretrained_symbols(),
+        description=(
+            "Ordered symbol list that matches the pretrained text-encoder embedding table. "
+            "The index of each symbol here is its embedding-table row. "
+            "Override only if you are using a custom pretrained text encoder."
+        ),
     )
 
 
@@ -149,6 +166,13 @@ class StyleTTS2ModelConfig(ConfigModel):
     multispeaker: bool = Field(
         default=False,
         description="Enable multi-speaker conditioning.",
+    )
+    target_text_representation_level: TargetTrainingTextRepresentationLevel = Field(
+        default=TargetTrainingTextRepresentationLevel.characters,
+        description=(
+            "Whether to train on 'characters' or 'ipa_phones'. "
+            "Must match the representation used during everyvoice preprocess."
+        ),
     )
     dim_in: int = Field(default=64, description="Input channel dimension.")
     hidden_dim: int = Field(default=512, description="Main hidden dimension.")
@@ -352,6 +376,30 @@ class StyleTTS2Config(BaseModelWithContact):
         default_factory=StyleTTS2PretrainedConfig,
         description="Paths to frozen pretrained backbone models.",
     )
+
+    @model_validator(mode="after")
+    def check_symbols_in_pretrained(self) -> "StyleTTS2Config":
+        from everyvoice.text.text_processor import TextProcessor
+
+        tp = TextProcessor(self.text)
+        pretrained_set = set(self.pretrained.pretrained_symbols)
+        # Only validate user-declared content symbols (letters, IPA phones, etc.).
+        # Internal punctuation tokens (<EXCL>, <COMMA>, …) are handled by the
+        # EVStyleTTS2TextEncoder remapping layer and don't need to be in the
+        # pretrained table.  <SIL> is dropped silently at encode time.
+        _skip = {tp._pad_symbol, "<SIL>"}
+        _skip |= set(tp.punctuation_internal_hash.values())
+        ev_symbols = [
+            s for s in tp.config.symbols.all_except_punctuation if s not in _skip
+        ]
+        missing = [s for s in ev_symbols if s not in pretrained_set]
+        if missing:
+            raise ValueError(
+                f"The following symbols declared in your TextConfig are not present in "
+                f"the pretrained StyleTTS2 text-encoder symbol table: {missing}. "
+                f"Either remove them from your TextConfig or use a custom pretrained_symbols list."
+            )
+        return self
 
     @model_validator(mode="before")  # type: ignore
     def load_partials(self: dict[Any, Any], info: ValidationInfo):  # type: ignore[misc]

@@ -71,6 +71,7 @@ def to_native_config(config: StyleTTS2Config) -> dict:
             "root_path": str(tr.root_path),
             "OOD_data": str(tr.ood_data),
             "min_length": tr.min_length,
+            "target_text_representation": m.target_text_representation_level.value,
         },
         # --- audio preprocessing ---
         "preprocess_params": {
