@@ -6,6 +6,7 @@ import lightning as L
 import numpy as np
 import torch
 import torch.nn.functional as F
+from monotonic_align import mask_from_lens
 from munch import Munch
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import OneCycleLR
@@ -21,7 +22,6 @@ from .utils import (
     get_image,
     length_to_mask,
     log_norm,
-    mask_from_lens,
     maximum_path,
     recursive_munch,
 )

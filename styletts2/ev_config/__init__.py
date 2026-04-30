@@ -22,7 +22,7 @@ LATEST_VERSION: str = "0.1"
 
 def _default_pretrained_symbols() -> list[str]:
     """Return the symbol list bundled with the pretrained StyleTTS2 text encoder."""
-    from styletts2.text_utils import symbols
+    from ..text_utils import symbols
 
     return list(symbols)
 
