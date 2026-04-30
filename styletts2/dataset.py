@@ -1,6 +1,10 @@
+from __future__ import annotations
+
+import logging
 import os.path as osp
 import random
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import librosa
 import numpy as np
@@ -10,10 +14,11 @@ import torch
 import torchaudio  # noqa: F401 (kept for downstream imports)
 from torch.utils.data import DataLoader
 
-import logging
-
 from .text_utils import TextCleaner
 from .utils import MEL_MEAN, MEL_STD, make_mel_transform
+
+if TYPE_CHECKING:
+    from everyvoice.config.text_config import TextConfig
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +51,8 @@ class FilePathDataset(torch.utils.data.Dataset):
         preprocessed_dir=None,
         output_sampling_rate=None,
         speaker2id=None,
+        ev_text_config: TextConfig | None = None,
+        pretrained_symbols: list[str] | None = None,
         data_augmentation=False,
         validation=False,
         OOD_data="data/OOD_texts.txt",
@@ -71,6 +78,20 @@ class FilePathDataset(torch.utils.data.Dataset):
             _data_list = [l.strip().split("|") for l in data_list]
             self.data_list = [data if len(data) == 3 else (*data, 0) for data in _data_list]
             self.df = pd.DataFrame(self.data_list)
+
+        # EveryVoice text encoder — only built when both config and symbols are provided.
+        if ev_text_config is not None and pretrained_symbols is not None:
+            from .ev_config.text import EVStyleTTS2TextEncoder
+            self._ev_encoder: EVStyleTTS2TextEncoder | None = EVStyleTTS2TextEncoder(
+                ev_text_config, pretrained_symbols
+            )
+            target_repr = config["data_params"].get("target_text_representation", "characters")
+            self._token_column = (
+                "phone_tokens" if target_repr == "phones" else "character_tokens"
+            )
+        else:
+            self._ev_encoder = None
+            self._token_column = "character_tokens"
 
         self.text_cleaner = TextCleaner()
         self.to_mel = make_mel_transform(config)
@@ -120,12 +141,19 @@ class FilePathDataset(torch.utils.data.Dataset):
         pad = np.zeros([self.silence_pad_samples])
         wave = np.concatenate([pad, wave, pad], axis=0)
 
-        # Use the raw character string so TextCleaner can tokenise it
-        raw_text = item.get("characters", "")
-        text = self.text_cleaner(raw_text)
-        text.insert(0, 0)
-        text.append(0)
-        text = torch.LongTensor(text)
+        if self._ev_encoder is not None:
+            # Use the EveryVoice-preprocessed token column so that normalisation
+            # and (optionally) G2P have already been applied by everyvoice preprocess.
+            token_str = item.get(self._token_column, "")
+            indices = self._ev_encoder.encode_token_sequence(token_str)
+        else:
+            # Fallback: raw character string through StyleTTS2's native TextCleaner.
+            raw_text = item.get("characters", "")
+            indices = self.text_cleaner(raw_text)
+
+        indices.insert(0, 0)   # prepend StyleTTS2 pad/boundary symbol ($)
+        indices.append(0)
+        text = torch.LongTensor(indices)
 
         return wave, text, speaker_id
 
@@ -202,7 +230,11 @@ class FilePathDataset(torch.utils.data.Dataset):
         length_feature = acoustic_feature.size(1)
         acoustic_feature = acoustic_feature[:, : (length_feature - length_feature % 2)]
 
-        # OOD text (raw strings through TextCleaner — same in both modes)
+        # OOD text — raw strings through StyleTTS2's TextCleaner in both modes.
+        # TODO: In EveryVoice mode this should ideally use text that has been
+        #   preprocessed by ``everyvoice preprocess`` (normalised + G2P'd) so
+        #   that OOD validation audio is consistent with training text.  For now
+        #   TextCleaner gives sufficient quality for qualitative listening.
         ps = ""
         while len(ps) < self.min_length:
             rand_idx = np.random.randint(0, len(self.ptexts) - 1)
@@ -282,6 +314,8 @@ def build_dataloader(
     preprocessed_dir=None,
     output_sampling_rate=None,
     speaker2id=None,
+    ev_text_config=None,
+    pretrained_symbols=None,
     validation=False,
     OOD_data="data/OOD_texts.txt",
     min_length=50,
@@ -299,6 +333,8 @@ def build_dataloader(
         preprocessed_dir=preprocessed_dir,
         output_sampling_rate=output_sampling_rate,
         speaker2id=speaker2id,
+        ev_text_config=ev_text_config,
+        pretrained_symbols=pretrained_symbols,
         OOD_data=OOD_data,
         min_length=min_length,
         validation=validation,

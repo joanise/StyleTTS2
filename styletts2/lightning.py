@@ -27,20 +27,51 @@ from .pretrained.plbert.util import load_plbert
 # ---------------------------------------------------------------------------
 
 class StyleTTS2DataModule(L.LightningDataModule):
-    def __init__(self, config: dict):
+    def __init__(self, config):
         super().__init__()
-        self.config = config
+        # Accept either a native dict or a StyleTTS2Config (EveryVoice mode).
+        from everyvoice.model.e2e.StyleTTS2_lightning.styletts2.ev_config import (
+            StyleTTS2Config,
+        )
+        from everyvoice.model.e2e.StyleTTS2_lightning.styletts2.ev_config.translation import (
+            to_native_config,
+        )
+
+        if isinstance(config, StyleTTS2Config):
+            self._ev_text_config = config.text
+            self._pretrained_symbols = config.pretrained.pretrained_symbols
+            self._preprocessed_dir = str(config.preprocessing.save_dir)
+            self._output_sampling_rate = config.preprocessing.audio.output_sampling_rate
+            self.config = to_native_config(config)
+        else:
+            self._ev_text_config = None
+            self._pretrained_symbols = None
+            self._preprocessed_dir = None
+            self._output_sampling_rate = None
+            self.config = config
+
         self.train_list = None
         self.val_list = None
 
     def setup(self, stage=None):
         dp = self.config['data_params']
-        self.train_list, self.val_list = get_data_path_list(dp['train_data'], dp['val_data'])
+        if self._ev_text_config is not None:
+            from everyvoice.utils import generic_psv_filelist_reader
+            self.train_list = generic_psv_filelist_reader(dp['train_data'])
+            self.val_list = generic_psv_filelist_reader(dp['val_data'])
+        else:
+            self.train_list, self.val_list = get_data_path_list(
+                dp['train_data'], dp['val_data']
+            )
 
     def train_dataloader(self):
         dp = self.config['data_params']
         return build_dataloader(
             self.train_list, dp['root_path'], self.config,
+            preprocessed_dir=self._preprocessed_dir,
+            output_sampling_rate=self._output_sampling_rate,
+            ev_text_config=self._ev_text_config,
+            pretrained_symbols=self._pretrained_symbols,
             OOD_data=dp['OOD_data'], min_length=dp['min_length'],
             batch_size=self.config.get('batch_size', 16), num_workers=2,
         )
@@ -49,6 +80,10 @@ class StyleTTS2DataModule(L.LightningDataModule):
         dp = self.config['data_params']
         return build_dataloader(
             self.val_list, dp['root_path'], self.config,
+            preprocessed_dir=self._preprocessed_dir,
+            output_sampling_rate=self._output_sampling_rate,
+            ev_text_config=self._ev_text_config,
+            pretrained_symbols=self._pretrained_symbols,
             OOD_data=dp['OOD_data'], min_length=dp['min_length'],
             batch_size=self.config.get('batch_size', 16),
             validation=True, num_workers=0,
