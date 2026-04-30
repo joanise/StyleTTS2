@@ -8,18 +8,18 @@ version = "0.1.0"
 description = "StyleTTS2: Human-level TTS through style diffusion and adversarial training with large speech language models"
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.9"
+requires-python = ">=3.10, <3.13"
 dependencies = [
     "torch>=2.0",
     "torchaudio>=2.0",
     "transformers>=4.30",
     "lightning>=2.0",
-    "librosa>=0.10",
+    "librosa>=0.9",
     "soundfile",
     "pydub",
     "pyyaml",
     "munch",
-    "einops>=0.6",
+    "einops>=0.5",
     "einops-exts",
     "tqdm",
     "matplotlib",
@@ -33,6 +33,7 @@ dependencies = [
     "accelerate",
     "tensorboard>=2.20.0",
     "torchcodec>=0.9.1",
+    "everyvoice>=0.4.0",
 ]
 
 [project.optional-dependencies]
@@ -57,3 +58,10 @@ monotonic-align = { git = "https://github.com/resemble-ai/monotonic_align.git" }
 # name = "pytorch-cu121"
 # url = "https://download.pytorch.org/whl/cu121"
 # explicit = true
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["styletts2/tests"]
