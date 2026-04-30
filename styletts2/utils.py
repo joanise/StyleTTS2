@@ -1,13 +1,8 @@
-from monotonic_align import mask_from_lens
-from monotonic_align.core import maximum_path_c
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import copy
-from torch import nn
-import torch.nn.functional as F
 import torchaudio
-import librosa
-import matplotlib.pyplot as plt
+from monotonic_align.core import maximum_path_c
 from munch import Munch
 
 MEL_MEAN = -4.0
@@ -15,30 +10,36 @@ MEL_STD = 4.0
 
 
 def make_mel_transform(config):
-    pp = config['preprocess_params']
-    sp = pp.get('spect_params', {})
-    mp = pp.get('mel_params', {})
+    pp = config["preprocess_params"]
+    sp = pp.get("spect_params", {})
+    mp = pp.get("mel_params", {})
     return torchaudio.transforms.MelSpectrogram(
-        n_mels=mp.get('n_mels', 80),
-        n_fft=sp.get('n_fft', 2048),
-        win_length=sp.get('win_length', 1200),
-        hop_length=sp.get('hop_length', 300),
+        n_mels=mp.get("n_mels", 80),
+        n_fft=sp.get("n_fft", 2048),
+        win_length=sp.get("win_length", 1200),
+        hop_length=sp.get("hop_length", 300),
     )
 
-def maximum_path(neg_cent, mask):
-  """ Cython optimized version.
-  neg_cent: [b, t_t, t_s]
-  mask: [b, t_t, t_s]
-  """
-  device = neg_cent.device
-  dtype = neg_cent.dtype
-  neg_cent =  np.ascontiguousarray(neg_cent.data.cpu().numpy().astype(np.float32))
-  path =  np.ascontiguousarray(np.zeros(neg_cent.shape, dtype=np.int32))
 
-  t_t_max = np.ascontiguousarray(mask.sum(1)[:, 0].data.cpu().numpy().astype(np.int32))
-  t_s_max = np.ascontiguousarray(mask.sum(2)[:, 0].data.cpu().numpy().astype(np.int32))
-  maximum_path_c(path, neg_cent, t_t_max, t_s_max)
-  return torch.from_numpy(path).to(device=device, dtype=dtype)
+def maximum_path(neg_cent, mask):
+    """Cython optimized version.
+    neg_cent: [b, t_t, t_s]
+    mask: [b, t_t, t_s]
+    """
+    device = neg_cent.device
+    dtype = neg_cent.dtype
+    neg_cent = np.ascontiguousarray(neg_cent.data.cpu().numpy().astype(np.float32))
+    path = np.ascontiguousarray(np.zeros(neg_cent.shape, dtype=np.int32))
+
+    t_t_max = np.ascontiguousarray(
+        mask.sum(1)[:, 0].data.cpu().numpy().astype(np.int32)
+    )
+    t_s_max = np.ascontiguousarray(
+        mask.sum(2)[:, 0].data.cpu().numpy().astype(np.int32)
+    )
+    maximum_path_c(path, neg_cent, t_t_max, t_s_max)
+    return torch.from_numpy(path).to(device=device, dtype=dtype)
+
 
 def get_data_path_list(train_path=None, val_path=None):
     if train_path is None:
@@ -46,17 +47,24 @@ def get_data_path_list(train_path=None, val_path=None):
     if val_path is None:
         val_path = "data/val_list.txt"
 
-    with open(train_path, 'r', encoding='utf-8', errors='ignore') as f:
+    with open(train_path, "r", encoding="utf-8", errors="ignore") as f:
         train_list = f.readlines()
-    with open(val_path, 'r', encoding='utf-8', errors='ignore') as f:
+    with open(val_path, "r", encoding="utf-8", errors="ignore") as f:
         val_list = f.readlines()
 
     return train_list, val_list
 
+
 def length_to_mask(lengths):
-    mask = torch.arange(lengths.max()).unsqueeze(0).expand(lengths.shape[0], -1).type_as(lengths)
-    mask = torch.gt(mask+1, lengths.unsqueeze(1))
+    mask = (
+        torch.arange(lengths.max())
+        .unsqueeze(0)
+        .expand(lengths.shape[0], -1)
+        .type_as(lengths)
+    )
+    mask = torch.gt(mask + 1, lengths.unsqueeze(1))
     return mask
+
 
 # for norm consistency loss
 def log_norm(x, mean=-4, std=4, dim=2):
@@ -66,13 +74,15 @@ def log_norm(x, mean=-4, std=4, dim=2):
     x = torch.log(torch.exp(x * std + mean).norm(dim=dim))
     return x
 
+
 def get_image(arrs):
-    plt.switch_backend('agg')
+    plt.switch_backend("agg")
     fig = plt.figure()
     ax = plt.gca()
     ax.imshow(arrs)
 
     return fig
+
 
 def recursive_munch(d):
     if isinstance(d, dict):
@@ -81,8 +91,8 @@ def recursive_munch(d):
         return [recursive_munch(v) for v in d]
     else:
         return d
-    
+
+
 def log_print(message, logger):
     logger.info(message)
     print(message)
-    

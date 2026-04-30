@@ -22,7 +22,9 @@ class TestStyleTTS2PretrainedConfig(unittest.TestCase):
 
 class TestStyleTTS2ModelConfig(unittest.TestCase):
     def test_default_target_text_representation_level(self):
-        from everyvoice.config.type_definitions import TargetTrainingTextRepresentationLevel
+        from everyvoice.config.type_definitions import (
+            TargetTrainingTextRepresentationLevel,
+        )
 
         from styletts2.ev_config import StyleTTS2ModelConfig
 
@@ -50,10 +52,14 @@ class TestToNativeConfig(unittest.TestCase):
 
         cfg = self._make_config()
         native = to_native_config(cfg)
-        self.assertEqual(native["data_params"]["target_text_representation"], "characters")
+        self.assertEqual(
+            native["data_params"]["target_text_representation"], "characters"
+        )
 
     def test_target_text_representation_in_data_params_phones(self):
-        from everyvoice.config.type_definitions import TargetTrainingTextRepresentationLevel
+        from everyvoice.config.type_definitions import (
+            TargetTrainingTextRepresentationLevel,
+        )
 
         from styletts2.ev_config import StyleTTS2ModelConfig
         from styletts2.ev_config.translation import to_native_config
@@ -72,6 +78,7 @@ class TestEVStyleTTS2TextEncoder(unittest.TestCase):
     def setUp(self):
         # _WARN_ONCE is module-level state; clear it so warning tests are independent.
         import styletts2.ev_config.text as _text_mod
+
         _text_mod._WARN_ONCE.clear()
 
     def _make_encoder(self):
@@ -107,7 +114,10 @@ class TestEVStyleTTS2TextEncoder(unittest.TestCase):
         from everyvoice.text.features import DEFAULT_PUNCTUATION_HASH
 
         encoder, symbols = self._make_encoder()
-        tokens = {DEFAULT_PUNCTUATION_HASH["exclamations"]: "!", DEFAULT_PUNCTUATION_HASH["commas"]: ","}
+        tokens = {
+            DEFAULT_PUNCTUATION_HASH["exclamations"]: "!",
+            DEFAULT_PUNCTUATION_HASH["commas"]: ",",
+        }
         for k, v in tokens.items():
             indices = encoder.encode_token_sequence(k)
             self.assertEqual(len(indices), 1)

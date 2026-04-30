@@ -56,7 +56,9 @@ def to_native_config(config: StyleTTS2Config) -> dict:
         "epochs_2nd": tr.epochs_2nd,
         "batch_size": tr.batch_size,
         "max_len": tr.max_len,
-        "pretrained_model": str(tr.finetune_checkpoint) if tr.finetune_checkpoint else "",
+        "pretrained_model": (
+            str(tr.finetune_checkpoint) if tr.finetune_checkpoint else ""
+        ),
         "second_stage_load_pretrained": tr.second_stage_load_pretrained,
         "load_only_params": tr.load_only_params,
         # --- pretrained backbone paths ---

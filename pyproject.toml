@@ -84,8 +84,7 @@ dev = [
   "styletts2[test]",
 ]
 test = [
-    "pytest",
-    "ruff",
+    "pytest"
 ]
 [project.scripts]
 styletts2 = "styletts2.cli:app"

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Annotated, Any, Optional, Union
+from typing import Annotated, Any, Optional
 
 from everyvoice.config.preprocessing_config import PreprocessingConfig
 from everyvoice.config.shared_types import (
@@ -22,9 +22,8 @@ LATEST_VERSION: str = "0.1"
 
 def _default_pretrained_symbols() -> list[str]:
     """Return the symbol list bundled with the pretrained StyleTTS2 text encoder."""
-    from styletts2.text_utils import (
-        symbols,
-    )
+    from styletts2.text_utils import symbols
+
     return list(symbols)
 
 
@@ -176,7 +175,9 @@ class StyleTTS2ModelConfig(ConfigModel):
     )
     dim_in: int = Field(default=64, description="Input channel dimension.")
     hidden_dim: int = Field(default=512, description="Main hidden dimension.")
-    max_conv_dim: int = Field(default=512, description="Maximum convolutional dimension.")
+    max_conv_dim: int = Field(
+        default=512, description="Maximum convolutional dimension."
+    )
     n_layer: int = Field(default=3, description="Number of style encoder layers.")
     max_dur: int = Field(
         default=50, description="Maximum duration (frames) for a single phoneme."
@@ -185,7 +186,9 @@ class StyleTTS2ModelConfig(ConfigModel):
     dropout: float = Field(default=0.2)
     decoder: StyleTTS2DecoderConfig = Field(default_factory=StyleTTS2DecoderConfig)
     slm: StyleTTS2SLMConfig = Field(default_factory=StyleTTS2SLMConfig)
-    diffusion: StyleTTS2DiffusionConfig = Field(default_factory=StyleTTS2DiffusionConfig)
+    diffusion: StyleTTS2DiffusionConfig = Field(
+        default_factory=StyleTTS2DiffusionConfig
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -194,9 +197,13 @@ class StyleTTS2ModelConfig(ConfigModel):
 
 
 class StyleTTS2LossConfig(ConfigModel):
-    lambda_mel: float = Field(default=5.0, description="Mel reconstruction loss weight.")
+    lambda_mel: float = Field(
+        default=5.0, description="Mel reconstruction loss weight."
+    )
     lambda_gen: float = Field(default=1.0, description="Generator (GAN) loss weight.")
-    lambda_slm: float = Field(default=1.0, description="SLM feature-matching loss weight.")
+    lambda_slm: float = Field(
+        default=1.0, description="SLM feature-matching loss weight."
+    )
     lambda_mono: float = Field(
         default=1.0, description="Monotonic alignment loss weight (stage 1 TMA)."
     )
@@ -212,7 +219,9 @@ class StyleTTS2LossConfig(ConfigModel):
     lambda_norm: float = Field(
         default=1.0, description="Norm reconstruction loss weight (stage 2)."
     )
-    lambda_dur: float = Field(default=1.0, description="Duration loss weight (stage 2).")
+    lambda_dur: float = Field(
+        default=1.0, description="Duration loss weight (stage 2)."
+    )
     lambda_ce: float = Field(
         default=20.0,
         description="Duration predictor cross-entropy loss weight (stage 2).",
@@ -224,7 +233,8 @@ class StyleTTS2LossConfig(ConfigModel):
         default=1.0, description="Score-matching (diffusion) loss weight (stage 2)."
     )
     diff_epoch: int = Field(
-        default=20, description="Epoch at which style diffusion training begins (stage 2)."
+        default=20,
+        description="Epoch at which style diffusion training begins (stage 2).",
     )
     joint_epoch: int = Field(
         default=50,
@@ -252,8 +262,12 @@ class StyleTTS2OptimizerConfig(ConfigModel):
 
 
 class StyleTTS2SLMAdvConfig(ConfigModel):
-    min_len: int = Field(default=100, description="Minimum sample length for SLM adversarial loss.")
-    max_len: int = Field(default=500, description="Maximum sample length for SLM adversarial loss.")
+    min_len: int = Field(
+        default=100, description="Minimum sample length for SLM adversarial loss."
+    )
+    max_len: int = Field(
+        default=500, description="Maximum sample length for SLM adversarial loss."
+    )
     batch_percentage: float = Field(
         default=0.5,
         description="Fraction of the batch to use for SLM adversarial loss (to save memory).",
@@ -361,7 +375,8 @@ class StyleTTS2Config(BaseModelWithContact):
         description="Preprocessing configuration (audio settings, dataset paths).",
     )
     path_to_preprocessing_config_file: Optional[FilePath] = Field(
-        default=None, description="Path to an external preprocessing configuration file."
+        default=None,
+        description="Path to an external preprocessing configuration file.",
     )
 
     text: TextConfig = Field(

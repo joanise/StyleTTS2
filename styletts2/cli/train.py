@@ -36,6 +36,7 @@ def train(
 ):
     """Train a StyleTTS2 end-to-end TTS model."""
     with spinner():
+        import lightning as L
         from everyvoice.model.e2e.StyleTTS2_lightning.styletts2.ev_config import (
             StyleTTS2Config,
         )
@@ -47,8 +48,6 @@ def train(
             StyleTTS2Module,
         )
         from everyvoice.utils import update_config_from_cli_args
-
-        import lightning as L
         from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
         from lightning.pytorch.loggers import TensorBoardLogger
         from lightning.pytorch.strategies import DDPStrategy
@@ -65,9 +64,7 @@ def train(
     max_epochs = (
         tr.epochs_1st
         if mode == Mode.first
-        else tr.epochs_2nd
-        if mode == Mode.second
-        else tr.max_epochs
+        else tr.epochs_2nd if mode == Mode.second else tr.max_epochs
     )
 
     log_dir = config["log_dir"]

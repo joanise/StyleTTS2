@@ -33,13 +33,15 @@ logger = logging.getLogger(__name__)
 _EV_PUNCT_TO_ST2: dict[str, str | None] = {
     DEFAULT_PUNCTUATION_HASH["exclamations"]: "!",
     DEFAULT_PUNCTUATION_HASH["question_symbols"]: "?",
-    DEFAULT_PUNCTUATION_HASH["quotemarks"]: "“",  # “ left double quotation mark (U+201C)
+    DEFAULT_PUNCTUATION_HASH[
+        "quotemarks"
+    ]: "“",  # “ left double quotation mark (U+201C)
     DEFAULT_PUNCTUATION_HASH["periods"]: ".",
     DEFAULT_PUNCTUATION_HASH["commas"]: ",",
     DEFAULT_PUNCTUATION_HASH["colons"]: ":",
     DEFAULT_PUNCTUATION_HASH["semi_colons"]: ";",
-    DEFAULT_PUNCTUATION_HASH["hyphens"]: "—",     # — em dash
-    DEFAULT_PUNCTUATION_HASH["ellipses"]: "…",    # … horizontal ellipsis
+    DEFAULT_PUNCTUATION_HASH["hyphens"]: "—",  # — em dash
+    DEFAULT_PUNCTUATION_HASH["ellipses"]: "…",  # … horizontal ellipsis
     # Parentheses have no StyleTTS2 equivalent.  Warn and drop.
     DEFAULT_PUNCTUATION_HASH["parentheses"]: None,
 }

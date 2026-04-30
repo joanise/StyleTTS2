@@ -24,7 +24,6 @@ def preprocess(
     """Preprocess audio and text data for StyleTTS2 training."""
     with spinner():
         from everyvoice.base_cli.helpers import preprocess_base_command
-
         from everyvoice.model.e2e.StyleTTS2_lightning.styletts2.ev_config import (
             StyleTTS2Config,
         )

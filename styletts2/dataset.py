@@ -71,21 +71,29 @@ class FilePathDataset(torch.utils.data.Dataset):
             # data_list items are dicts from the EveryVoice PSV filelist loader
             self.data_list = data_list
             self.df = pd.DataFrame(
-                [{"basename": d["basename"], "speaker": d["speaker"]} for d in data_list]
+                [
+                    {"basename": d["basename"], "speaker": d["speaker"]}
+                    for d in data_list
+                ]
             )
         else:
             # Original format: pipe-separated strings
-            _data_list = [l.strip().split("|") for l in data_list]
-            self.data_list = [data if len(data) == 3 else (*data, 0) for data in _data_list]
+            _data_list = [dl.strip().split("|") for dl in data_list]
+            self.data_list = [
+                data if len(data) == 3 else (*data, 0) for data in _data_list
+            ]
             self.df = pd.DataFrame(self.data_list)
 
         # EveryVoice text encoder — only built when both config and symbols are provided.
         if ev_text_config is not None and pretrained_symbols is not None:
             from .ev_config.text import EVStyleTTS2TextEncoder
+
             self._ev_encoder: EVStyleTTS2TextEncoder | None = EVStyleTTS2TextEncoder(
                 ev_text_config, pretrained_symbols
             )
-            target_repr = config["data_params"].get("target_text_representation", "characters")
+            target_repr = config["data_params"].get(
+                "target_text_representation", "characters"
+            )
             self._token_column = (
                 "phone_tokens" if target_repr == "phones" else "character_tokens"
             )
@@ -151,7 +159,7 @@ class FilePathDataset(torch.utils.data.Dataset):
             raw_text = item.get("characters", "")
             indices = self.text_cleaner(raw_text)
 
-        indices.insert(0, 0)   # prepend StyleTTS2 pad/boundary symbol ($)
+        indices.insert(0, 0)  # prepend StyleTTS2 pad/boundary symbol ($)
         indices.append(0)
         text = torch.LongTensor(indices)
 
@@ -163,7 +171,9 @@ class FilePathDataset(torch.utils.data.Dataset):
         mel_length = mel_tensor.size(1)
         if mel_length > self.max_mel_length:
             random_start = np.random.randint(0, mel_length - self.max_mel_length)
-            mel_tensor = mel_tensor[:, random_start : random_start + self.max_mel_length]
+            mel_tensor = mel_tensor[
+                :, random_start : random_start + self.max_mel_length
+            ]
         return mel_tensor, speaker_id
 
     # ------------------------------------------------------------------
@@ -193,7 +203,9 @@ class FilePathDataset(torch.utils.data.Dataset):
     def _preprocess(self, wave):
         wave_tensor = torch.from_numpy(wave).float()
         mel_tensor = self.to_mel(wave_tensor)
-        return (torch.log(1e-5 + mel_tensor.unsqueeze(0)) - self.mel_mean) / self.mel_std
+        return (
+            torch.log(1e-5 + mel_tensor.unsqueeze(0)) - self.mel_mean
+        ) / self.mel_std
 
     def _load_data(self, data):
         wave, text_tensor, speaker_id = self._load_tensor(data)
@@ -201,7 +213,9 @@ class FilePathDataset(torch.utils.data.Dataset):
         mel_length = mel_tensor.size(1)
         if mel_length > self.max_mel_length:
             random_start = np.random.randint(0, mel_length - self.max_mel_length)
-            mel_tensor = mel_tensor[:, random_start : random_start + self.max_mel_length]
+            mel_tensor = mel_tensor[
+                :, random_start : random_start + self.max_mel_length
+            ]
         return mel_tensor, speaker_id
 
     # ------------------------------------------------------------------
@@ -221,7 +235,9 @@ class FilePathDataset(torch.utils.data.Dataset):
             path = data["basename"]
         else:
             wave, text_tensor, speaker_id = self._load_tensor(data)
-            ref_data = (self.df[self.df[2] == str(speaker_id)]).sample(n=1).iloc[0].tolist()
+            ref_data = (
+                (self.df[self.df[2] == str(speaker_id)]).sample(n=1).iloc[0].tolist()
+            )
             ref_mel_tensor, ref_label = self._load_data(ref_data[:3])
             path = data[0]
 
@@ -245,7 +261,16 @@ class FilePathDataset(torch.utils.data.Dataset):
             text.append(0)
             ref_text = torch.LongTensor(text)
 
-        return speaker_id, acoustic_feature, text_tensor, ref_text, ref_mel_tensor, ref_label, path, wave
+        return (
+            speaker_id,
+            acoustic_feature,
+            text_tensor,
+            ref_text,
+            ref_mel_tensor,
+            ref_label,
+            path,
+            wave,
+        )
 
 
 class Collater(object):
@@ -286,7 +311,16 @@ class Collater(object):
         paths = ["" for _ in range(batch_size)]
         waves = [None for _ in range(batch_size)]
 
-        for bid, (label, mel, text, ref_text, ref_mel, ref_label, path, wave) in enumerate(batch):
+        for bid, (
+            label,
+            mel,
+            text,
+            ref_text,
+            ref_mel,
+            ref_label,
+            path,
+            wave,
+        ) in enumerate(batch):
             mel_size = mel.size(1)
             text_size = text.size(0)
             rtext_size = ref_text.size(0)
@@ -304,7 +338,16 @@ class Collater(object):
             ref_labels[bid] = ref_label
             waves[bid] = wave
 
-        return waves, texts, input_lengths, ref_texts, ref_lengths, mels, output_lengths, ref_mels
+        return (
+            waves,
+            texts,
+            input_lengths,
+            ref_texts,
+            ref_lengths,
+            mels,
+            output_lengths,
+            ref_mels,
+        )
 
 
 def build_dataloader(
