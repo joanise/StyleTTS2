@@ -5,9 +5,38 @@ build-backend = "hatchling.build"
 [project]
 name = "styletts2"
 version = "0.1.0"
-description = "StyleTTS2: Human-level TTS through style diffusion and adversarial training with large speech language models"
+description = "StyleTTS2: TTS through style diffusion and adversarial training with large speech language models"
 readme = "README.md"
 license = { file = "LICENSE" }
+keywords = ["TTS", "CLI"]
+authors = [
+  { name = "Aidan Pine", email = "Aidan.Pine@nrc-cnrc.gc.ca" }
+]
+maintainers = [
+  { name = "Aidan Pine", email = "Aidan.Pine@nrc-cnrc.gc.ca" },
+  { name = "Eric Joanis", email = "Eric.Joanis@nrc-cnrc.gc.ca" }
+]
+classifiers = [
+  "Intended Audience :: Developers",
+  "Intended Audience :: Education",
+  "Intended Audience :: End Users/Desktop",
+  "Intended Audience :: Other Audience",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python",
+  "Programming Language :: Unix Shell",
+  "Development Status :: 4 - Beta",
+  "Topic :: Multimedia :: Sound/Audio :: Speech",
+  "Typing :: Typed",
+]
 requires-python = ">=3.10, <3.13"
 dependencies = [
     "torch>=2.0",
@@ -38,9 +67,28 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+  "black~=24.3",
+  "coverage",
+  "chardet<6", # requests<=2.32.5 not compat with chardet>=6, remove this on next requests release
+  "diff-cover",
+  "flake8>=4.0.1",
+  "gitlint-core>=0.19.0",
+  "isort>=5.10.1",
+  "mypy>=1.8.0",
+  "pre-commit>=3.2.0",
+  "types-pyyaml>=6.0.5",
+  "types-requests>=2.27.11",
+  "types-setuptools>=57.4.9",
+  "types-tabulate==0.9.0",
+  "types-tqdm>=4.66",
+  "styletts2[test]",
+]
+test = [
     "pytest",
     "ruff",
 ]
+[project.scripts]
+styletts2 = "styletts2.cli:app"
 
 # ---------------------------------------------------------------------------
 # uv configuration
@@ -50,14 +98,20 @@ dev = [
 # monotonic_align has no PyPI release; install from source
 monotonic-align = { git = "https://github.com/resemble-ai/monotonic_align.git" }
 
-# PyTorch CUDA wheels — uncomment and adjust the CUDA version as needed.
-# torch = { index = "pytorch-cu121" }
-# torchaudio = { index = "pytorch-cu121" }
+[tool.isort]
+known_first_party = "styletts2"
+multi_line_output = 3
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+line_length = 88
+ensure_newline_before_comments = true
 
-# [[tool.uv.index]]
-# name = "pytorch-cu121"
-# url = "https://download.pytorch.org/whl/cu121"
-# explicit = true
+[tool.mypy]
+files = "styletts2"
+ignore_missing_imports = true
+plugins = ["pydantic.mypy", "numpy.typing.mypy_plugin"]
+check_untyped_defs = false
 
 # ---------------------------------------------------------------------------
 # pytest
