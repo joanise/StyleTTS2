@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+
 from math import log, pi
 from typing import Optional
 

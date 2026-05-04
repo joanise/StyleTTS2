@@ -21,7 +21,9 @@ def is_sequence(obj: T) -> TypeGuard[Union[list, tuple]]:
     return isinstance(obj, list) or isinstance(obj, tuple)
 
 
-def default(val: Optional[T], d: Union[Callable[..., T], T]) -> T:
+def default(
+    val: Optional[T], d: Union[Callable[..., T], T]
+) -> Union[Callable[..., T], T]:
     if exists(val):
         return val
     return d() if isfunction(d) else d

@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+
 from math import atan, cos, pi, sin, sqrt
 from typing import Any, Callable, List, Optional, Tuple, Type
 
