@@ -1,3 +1,5 @@
+# mypy: ignore-errors
+
 from torch import Tensor, nn
 
 from .sampler import LinearSchedule, UniformDistribution, VSampler
