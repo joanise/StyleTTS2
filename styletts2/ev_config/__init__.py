@@ -31,6 +31,7 @@ def _default_pretrained_symbols() -> list[str]:
 # Pretrained backbone paths
 # ---------------------------------------------------------------------------
 
+
 class StyleTTS2PretrainedConfig(ConfigModel):
     """Paths to the frozen pretrained models bundled with StyleTTS2."""
 
@@ -77,10 +78,11 @@ class StyleTTS2DecoderConfig(HiFiGANModelConfig):
     separately inside the StyleTTS2 model builder.
     """
 
-    # iSTFTNet defaults (base.yml single-speaker)
-    # These values are already defined in HiFiGANModelConfig, but they need different defaults.
     # TODO: these settings are configured for a sampling rate of 22050 and hop size of 256
     #       but we should try training and consider changing back to 24000 and 300 to match the original StyleTTS2
+    # iSTFTNet defaults tuned for EveryVoice's default fft_hop_size=256:
+    #   prod(upsample_rates) × gen_istft_hop_size = 8 × 8 (upsample rates) × 4 (hop size) = 256
+    # These values are already defined in HiFiGANModelConfig, but they need different defaults.
     upsample_rates: list[int] = Field(default=[8, 8])
     upsample_kernel_sizes: list[int] = Field(default=[16, 16])
     istft_layer: bool = Field(
@@ -303,6 +305,7 @@ class StyleTTS2TrainingConfig(BaseTrainingConfig):
     training_filelist (→ data_params.train_data),
     validation_filelist (→ data_params.val_data), logger, and data workers.
     """
+
     batch_size: int = Field(
         default=2,
         description="The number of samples to include in each batch when training. If you are running out of memory, consider lowering your batch_size.",
@@ -394,6 +397,31 @@ class StyleTTS2Config(BaseModelWithContact):
         default_factory=StyleTTS2PretrainedConfig,
         description="Paths to frozen pretrained backbone models.",
     )
+
+    @model_validator(mode="after")
+    def check_decoder_hop_alignment(self) -> "StyleTTS2Config":
+        from math import prod
+
+        hop = self.preprocessing.audio.fft_hop_size
+        dec = self.model.decoder
+        if dec.istft_layer:
+            effective_hop = prod(dec.upsample_rates) * dec.gen_istft_hop_size
+            if effective_hop != hop:
+                raise ValueError(
+                    f"Decoder effective hop length ({effective_hop} = "
+                    f"prod(upsample_rates={dec.upsample_rates}) × "
+                    f"gen_istft_hop_size={dec.gen_istft_hop_size}) does not match "
+                    f"preprocessing.audio.fft_hop_size ({hop}). "
+                    "The decoder must produce exactly fft_hop_size audio samples per "
+                    "mel frame, otherwise the decoder output and ground-truth audio "
+                    "will have mismatched lengths during training. "
+                    f"For fft_hop_size={hop}, choose upsample_rates and gen_istft_hop_size "
+                    f"such that their product equals {hop} "
+                    "(e.g. upsample_rates=[8, 8], upsample_kernel_sizes=[16, 16], "
+                    "gen_istft_hop_size=4, gen_istft_n_fft=16 for hop=256). "
+                    "Set these under model.decoder in your config."
+                )
+        return self
 
     @model_validator(mode="after")
     def check_symbols_in_pretrained(self) -> "StyleTTS2Config":
