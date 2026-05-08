@@ -52,7 +52,7 @@ def main(
     )
     max_epochs = config.get(epochs_key, 200)
 
-    datamodule = StyleTTS2DataModule(config)
+    datamodule = StyleTTS2DataModule(config, load_for_everyvoice=False)
     model = StyleTTS2Module(config, mode=mode.value)
 
     tb_logger = TensorBoardLogger(save_dir=log_dir, name="tensorboard", version="")

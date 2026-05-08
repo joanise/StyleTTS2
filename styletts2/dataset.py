@@ -123,14 +123,14 @@ class FilePathDataset(torch.utils.data.Dataset):
     # EveryVoice-mode helpers
     # ------------------------------------------------------------------
 
-    def _load_file(self, bn, spk, lang, dir, fn):
+    def _load_file(self, bn, spk, lang, dn, fn):
         """Return the Path for a file in the EveryVoice preprocessed directory.
 
         Mirrors fs2/dataset.py::FastSpeechDataset._load_file, but returns a
         Path rather than a loaded tensor because wav files are read with
         soundfile rather than torch.load.
         """
-        return self.preprocessed_dir / dir / self.sep.join([bn, spk, lang, fn])
+        return self.preprocessed_dir / dn / self.sep.join([bn, spk, lang, fn])
 
     def _load_tensor_ev(self, item):
         """Load wave + text tensor + speaker id from an EveryVoice filelist dict."""
@@ -224,7 +224,6 @@ class FilePathDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         data = self.data_list[idx]
-
         if self.preprocessed_dir is not None:
             wave, text_tensor, speaker_id = self._load_tensor_ev(data)
             # Reference sample: another utterance from the same speaker

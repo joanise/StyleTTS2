@@ -113,7 +113,7 @@ def train(
         enable_progress_bar=True,
     )
 
-    datamodule = StyleTTS2DataModule(config)
+    datamodule = StyleTTS2DataModule(config, load_for_everyvoice=True)
     model = StyleTTS2Module(config, mode=mode.value)
 
     resume_ckpt = (

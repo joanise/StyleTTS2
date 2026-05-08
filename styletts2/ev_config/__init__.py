@@ -31,7 +31,6 @@ def _default_pretrained_symbols() -> list[str]:
 # Pretrained backbone paths
 # ---------------------------------------------------------------------------
 
-
 class StyleTTS2PretrainedConfig(ConfigModel):
     """Paths to the frozen pretrained models bundled with StyleTTS2."""
 
@@ -80,18 +79,19 @@ class StyleTTS2DecoderConfig(HiFiGANModelConfig):
 
     # iSTFTNet defaults (base.yml single-speaker)
     # These values are already defined in HiFiGANModelConfig, but they need different defaults.
-    upsample_rates: list[int] = Field(default=[10, 6])
-    upsample_kernel_sizes: list[int] = Field(default=[20, 12])
+    # TODO: these settings are configured for a sampling rate of 22050 and hop size of 256
+    #       but we should try training and consider changing back to 24000 and 300 to match the original StyleTTS2
+    upsample_rates: list[int] = Field(default=[8, 8])
+    upsample_kernel_sizes: list[int] = Field(default=[16, 16])
     istft_layer: bool = Field(
         default=True,
     )
-    # TODO: Are these necessary?
     gen_istft_n_fft: int = Field(
-        default=20,
+        default=16,
         description="FFT size for the iSTFTNet generator. Only used when istft_layer=True.",
     )
     gen_istft_hop_size: int = Field(
-        default=5,
+        default=4,
         description="Hop size for the iSTFTNet generator. Only used when istft_layer=True.",
     )
 
@@ -303,7 +303,10 @@ class StyleTTS2TrainingConfig(BaseTrainingConfig):
     training_filelist (→ data_params.train_data),
     validation_filelist (→ data_params.val_data), logger, and data workers.
     """
-
+    batch_size: int = Field(
+        default=2,
+        description="The number of samples to include in each batch when training. If you are running out of memory, consider lowering your batch_size.",
+    )
     # TODO: Do we even need stage 1 and stage 2 to be separated from the training routine now that multi-gpu training is possible?
     epochs_1st: int = Field(
         default=200, description="Number of epochs for stage 1 (pre-training)."
@@ -312,8 +315,8 @@ class StyleTTS2TrainingConfig(BaseTrainingConfig):
         default=100, description="Number of epochs for stage 2 (joint training)."
     )
     max_len: int = Field(
-        default=400,
-        description="Maximum clip length in mel frames used during training.",
+        default=800,
+        description="Maximum clip length in Mel frames used during training. You can lower this or your batch size if you run into out-of-memory errors. Advanced: In time, this is equal to max_len * (hop_length / sampling rate). e.g. with a max_len of 800, a hop length of 300 and a sampling rate of 24kHz, this is equal to ten seconds (800 * (300 / 24000)).",
     )
     first_stage_path: str = Field(
         default="first_stage.pth",

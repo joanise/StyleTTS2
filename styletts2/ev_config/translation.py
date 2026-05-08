@@ -11,8 +11,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from everyvoice.text.text_processor import TextProcessor
-
 if TYPE_CHECKING:
     from everyvoice.model.e2e.StyleTTS2_lightning.styletts2.ev_config import (
         StyleTTS2Config,
@@ -24,7 +22,7 @@ def to_native_config(config: StyleTTS2Config) -> dict:
 
     Derived quantities:
     - ``n_mels``  ← preprocessing.audio.n_mels
-    - ``n_token`` ← len(TextProcessor(text).symbols)
+    - ``n_token`` ← len(pre.pretrained_symbols)
 
     These are intentionally absent from StyleTTS2ModelConfig so there is a
     single source of truth for each value.
@@ -47,6 +45,8 @@ def to_native_config(config: StyleTTS2Config) -> dict:
         decoder_dict["gen_istft_hop_size"] = m.decoder.gen_istft_hop_size
 
     return {
+        # --- include the original ev config object as well ---
+        "ev_config": config,
         # --- top-level training bookkeeping ---
         "log_dir": str(Path(tr.logger.save_dir) / tr.logger.name / tr.logger.version),
         "first_stage_path": tr.first_stage_path,
@@ -93,7 +93,7 @@ def to_native_config(config: StyleTTS2Config) -> dict:
             "n_layer": m.n_layer,
             # Derived from preprocessing and text configs:
             "n_mels": audio.n_mels,
-            "n_token": len(TextProcessor(config.text).symbols),
+            "n_token": len(pre.pretrained_symbols),
             "max_dur": m.max_dur,
             "style_dim": m.style_dim,
             "dropout": m.dropout,

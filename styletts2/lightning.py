@@ -32,7 +32,7 @@ from .utils import (
 
 
 class StyleTTS2DataModule(L.LightningDataModule):
-    def __init__(self, config):
+    def __init__(self, config, load_for_everyvoice=False):
         super().__init__()
         # Accept either a native dict or a StyleTTS2Config (EveryVoice mode).
         from .ev_config import (
@@ -42,12 +42,14 @@ class StyleTTS2DataModule(L.LightningDataModule):
             to_native_config,
         )
 
-        if isinstance(config, StyleTTS2Config):
-            self._ev_text_config = config.text
-            self._pretrained_symbols = config.pretrained.pretrained_symbols
-            self._preprocessed_dir = str(config.preprocessing.save_dir)
-            self._output_sampling_rate = config.preprocessing.audio.output_sampling_rate
-            self.config = to_native_config(config)
+        self.load_for_everyvoice = load_for_everyvoice
+
+        if load_for_everyvoice:
+            self._ev_text_config = config['ev_config'].text
+            self._pretrained_symbols = config['ev_config'].pretrained.pretrained_symbols
+            self._preprocessed_dir = str(config['ev_config'].preprocessing.save_dir)
+            self._output_sampling_rate = config['ev_config'].preprocessing.audio.output_sampling_rate
+            self.config = config
         else:
             self._ev_text_config = None
             self._pretrained_symbols = None
@@ -60,7 +62,7 @@ class StyleTTS2DataModule(L.LightningDataModule):
 
     def setup(self, stage=None):
         dp = self.config["data_params"]
-        if self._ev_text_config is not None:
+        if self.load_for_everyvoice:
             from everyvoice.utils import generic_psv_filelist_reader
 
             self.train_list = generic_psv_filelist_reader(dp["train_data"])
@@ -126,6 +128,7 @@ class StyleTTS2Module(L.LightningModule):
 
         # Core hyper-parameters
         self.sr = config["preprocess_params"].get("sr", 24000)
+        self.hop_length = config["preprocess_params"]["spect_params"]["hop_length"]
         self.max_len = config.get("max_len", 200)
         model_params = recursive_munch(config["model_params"])
         self.model_params = model_params
@@ -142,7 +145,7 @@ class StyleTTS2Module(L.LightningModule):
         text_aligner = load_ASR_models(config["ASR_path"], config["ASR_config"])
         pitch_extractor = load_F0_models(config["F0_path"])
         plbert = load_plbert(config["PLBERT_dir"])
-
+        # TODO: model_params passes an incorrect value for n_symbols in the text embedding
         nets = build_model(model_params, text_aligner, pitch_extractor, plbert)
         # Register every sub-network as a direct attribute so Lightning / DDP
         # tracks parameters and state correctly.
@@ -354,7 +357,6 @@ class StyleTTS2Module(L.LightningModule):
                     )
 
                     F0_real, _, _ = self.pitch_extractor(gt.unsqueeze(1))
-                    F0_real = F0_real.unsqueeze(0)
                     s = self.style_encoder(gt.unsqueeze(1))
                     real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
                     y_rec = self.decoder(en, F0_real, real_norm, s)
@@ -385,7 +387,6 @@ class StyleTTS2Module(L.LightningModule):
                         )
 
                         F0_real, _, _ = self.pitch_extractor(gt.unsqueeze(1))
-                        F0_real = F0_real.unsqueeze(0)
                         s = self.style_encoder(gt.unsqueeze(1))
                         real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
                         y_rec = self.decoder(en, F0_real, real_norm, s)
@@ -522,7 +523,7 @@ class StyleTTS2Module(L.LightningModule):
             rs = np.random.randint(0, half_len - mel_len)
             en.append(asr[bib, :, rs : rs + mel_len])
             gt.append(mels[bib, :, rs * 2 : (rs + mel_len) * 2])
-            y = waves[bib][rs * 2 * 300 : (rs + mel_len) * 2 * 300]
+            y = waves[bib][rs * 2 * self.hop_length : (rs + mel_len) * 2 * self.hop_length]
             wav.append(torch.from_numpy(y).to(device))
             if p is not None:
                 p_en.append(p[bib, :, rs : rs + mel_len])
