@@ -1,4 +1,12 @@
-# IPA Phonemizer: https://github.com/bootphon/phonemizer
+# The repo we forked from said:
+#   IPA Phonemizer: https://github.com/bootphon/phonemizer
+# but I cannot find even a trace of evidence of a connection to bootphon/phonemizer.
+#
+# However, similar code exists in these MIT licensed projects:
+# - https://github.com/keithito/tacotron (folder text/)
+# - https://huggingface.co/spaces/kevinwang676/VITS2-Mandarin/tree/main (text/symbols.py)
+# - https://github.com/ai-anchorite/Voice-Pro (app/third_party/Matcha-TTS/matcha/text/symbols.py explicitly credits keithito/tacotron)
+
 
 _pad = "$"
 _punctuation = ';:,.!?¡¿—…"«»“” '
