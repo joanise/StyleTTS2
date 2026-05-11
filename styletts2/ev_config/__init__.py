@@ -36,19 +36,23 @@ class StyleTTS2PretrainedConfig(ConfigModel):
     """Paths to the frozen pretrained models bundled with StyleTTS2."""
 
     f0_path: PossiblyRelativePath = Field(
-        default=Path("styletts2/pretrained/jdc/bst.t7"),
+        default="styletts2/pretrained/jdc/bst.t7",
+        validate_default=True,
         description="Path to the JDC F0 extractor checkpoint.",
     )
     asr_config: PossiblyRelativePath = Field(
-        default=Path("styletts2/pretrained/asr/config.yml"),
+        default="styletts2/pretrained/asr/config.yml",
+        validate_default=True,
         description="Path to the ASR model config.",
     )
     asr_path: PossiblyRelativePath = Field(
-        default=Path("styletts2/pretrained/asr/epoch_00080.pth"),
+        default="styletts2/pretrained/asr/epoch_00080.pth",
+        validate_default=True,
         description="Path to the ASR model checkpoint.",
     )
     plbert_dir: PossiblyRelativePath = Field(
-        default=Path("styletts2/pretrained/plbert"),
+        default="styletts2/pretrained/plbert",
+        validate_default=True,
         description="Directory containing the PLBERT checkpoint and config.",
     )
     pretrained_symbols: list[str] = Field(
@@ -334,11 +338,13 @@ class StyleTTS2TrainingConfig(BaseTrainingConfig):
         description="If True, load only model parameters from a checkpoint (skip optimizer state and epoch number).",
     )
     root_path: PossiblyRelativePath = Field(
-        default=Path("."),
+        default=".",
+        validate_default=True,
         description="Root directory that audio file paths in the filelist are relative to.",
     )
     ood_data: PossiblyRelativePath = Field(
-        default=Path("data/OOD_texts.txt"),
+        default="data/OOD_texts.txt",
+        validate_default=True,
         description="Path to out-of-distribution texts used for validation audio generation.",
     )
     min_length: int = Field(
