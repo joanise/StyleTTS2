@@ -1,5 +1,6 @@
 import os
 import shutil
+import sys
 from enum import Enum
 from pathlib import Path
 from typing import Annotated
@@ -36,6 +37,12 @@ def train(
 ):
     """Train a StyleTTS2 end-to-end TTS model."""
     with spinner():
+        import torch
+        if not torch.cuda.is_available():
+            # device="cuda" is assumed in multiple places, so let's just tell the user up front
+            # It's also pointless to try on CPU if it takes around a week on GPU...
+            sys.exit("ERROR: StyleTTS2 training requires a GPU with the cuda accellerator")
+
         import lightning as L
         from everyvoice.model.e2e.StyleTTS2_lightning.styletts2.ev_config import (
             StyleTTS2Config,

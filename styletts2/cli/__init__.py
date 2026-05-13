@@ -6,6 +6,7 @@ from .train import train as app_train
 
 app = typer.Typer(
     pretty_exceptions_show_locals=False,
+    no_args_is_help=True,
     context_settings={"help_option_names": ["-h", "--help"]},
     rich_markup_mode="markdown",
     help="A StyleTTS2 end-to-end text-to-speech model configured via EveryVoice.",

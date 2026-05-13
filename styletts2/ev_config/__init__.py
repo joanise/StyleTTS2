@@ -56,7 +56,7 @@ class StyleTTS2PretrainedConfig(ConfigModel):
         description="Directory containing the PLBERT checkpoint and config.",
     )
     pretrained_symbols: list[str] = Field(
-        default_factory=lambda: _default_pretrained_symbols(),
+        default_factory=_default_pretrained_symbols,
         description=(
             "Ordered symbol list that matches the pretrained text-encoder embedding table. "
             "The index of each symbol here is its embedding-table row. "
