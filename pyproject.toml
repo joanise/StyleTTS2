@@ -10,7 +10,8 @@ readme = "README.md"
 license = { file = "LICENSE" }
 keywords = ["TTS", "CLI"]
 authors = [
-  { name = "Aidan Pine", email = "Aidan.Pine@nrc-cnrc.gc.ca" }
+  { name = "Aidan Pine", email = "Aidan.Pine@nrc-cnrc.gc.ca" },
+  { name = "Yinghao Aaron Li" }
 ]
 maintainers = [
   { name = "Aidan Pine", email = "Aidan.Pine@nrc-cnrc.gc.ca" },
