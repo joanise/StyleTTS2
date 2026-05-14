@@ -662,7 +662,7 @@ class XDiffusion(nn.Module):
 
         diffusion_classes = [VDiffusion, KDiffusion, VKDiffusion]
         aliases = [t.alias for t in diffusion_classes]  # type: ignore
-        message = f"type='{type}' must be one of {*aliases,}"
+        message = f"type='{type}' must be one of {*aliases, }"
         assert type in aliases, message
         self.net = net
 

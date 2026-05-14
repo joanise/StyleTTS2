@@ -58,7 +58,8 @@ class StyleTransformer1d(nn.Module):
         embedding_max_length: int = 512,
     ):
         super().__init__()
-
+        if context_embedding_features is None:
+            context_embedding_features = 0  # so we can assume it's an int below
         self.blocks = nn.ModuleList(
             [
                 StyleTransformerBlock(
