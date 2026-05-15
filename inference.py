@@ -5,13 +5,16 @@ from typing import Annotated, Optional
 
 import soundfile as sf
 import torch
-import torchaudio
 import typer
 import yaml
 
 from styletts2.lightning import StyleTTS2Module
 from styletts2.text_utils import TextCleaner
-from styletts2.utils import MEL_MEAN, MEL_STD, length_to_mask, make_mel_transform
+from styletts2.utils import (
+    _load_reference_mel,
+    length_to_mask,
+    make_mel_transform,
+)
 
 try:
     from phonemizer.backend import EspeakBackend
@@ -38,17 +41,6 @@ def _phonemize(text, language):
     backend = EspeakBackend(language, preserve_punctuation=True, with_stress=True)
     result = backend.phonemize([text])
     return result[0] if result else ""
-
-
-def _load_reference_mel(path, target_sr, mel_transform):
-    wave, sr = torchaudio.load(path)
-    wave = wave.mean(0)
-    if sr != target_sr:
-        wave = torchaudio.functional.resample(wave, sr, target_sr)
-    wave = wave.to(next(mel_transform.buffers()).device)
-    mel = mel_transform(wave)
-    mel = (torch.log(1e-5 + mel.unsqueeze(0)) - MEL_MEAN) / MEL_STD
-    return mel  # [1, n_mels, T]
 
 
 def load_model(config_path, checkpoint_path, mode, device):
@@ -86,9 +78,7 @@ def synthesize(
     t_en = module.text_encoder(tokens, input_lengths, text_mask)
 
     ref_mel = _load_reference_mel(reference_path, module.sr, mel_transform).to(device)
-    ref_ss = module.style_encoder(ref_mel.unsqueeze(1))
-    ref_sp = module.predictor_encoder(ref_mel.unsqueeze(1))
-    ref_s = torch.cat([ref_ss, ref_sp], dim=1)
+    ref_s = module._encode_reference(ref_mel)
 
     noise = torch.randn((1, 256), device=device).unsqueeze(1)
     s_pred = module._sampler(
@@ -238,8 +228,11 @@ def main(
                     typer.echo(f"Skipping malformed line: {line!r}", err=True)
                     continue
                 rows.append((parts[0], parts[1]))
-    else:
+    elif text:
         rows = [("output", text)]
+    else:
+        typer.echo("Error: no text provided", err=True)
+        raise typer.Exit(code=1)
 
     for stem, raw_text in rows:
         if do_phonemize:

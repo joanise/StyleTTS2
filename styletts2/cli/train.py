@@ -38,26 +38,30 @@ def train(
     """Train a StyleTTS2 end-to-end TTS model."""
     with spinner():
         import torch
+
         if not torch.cuda.is_available():
             # device="cuda" is assumed in multiple places, so let's just tell the user up front
             # It's also pointless to try on CPU if it takes around a week on GPU...
-            sys.exit("ERROR: StyleTTS2 training requires a GPU with the cuda accellerator")
+            sys.exit(
+                "ERROR: StyleTTS2 training requires a GPU with the cuda accellerator"
+            )
 
         import lightning as L
-        from everyvoice.model.e2e.StyleTTS2_lightning.styletts2.ev_config import (
-            StyleTTS2Config,
-        )
-        from everyvoice.model.e2e.StyleTTS2_lightning.styletts2.ev_config.translation import (
-            to_native_config,
-        )
-        from everyvoice.model.e2e.StyleTTS2_lightning.styletts2.lightning import (
-            StyleTTS2DataModule,
-            StyleTTS2Module,
-        )
         from everyvoice.utils import update_config_from_cli_args
         from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
         from lightning.pytorch.loggers import TensorBoardLogger
         from lightning.pytorch.strategies import DDPStrategy
+
+        from .ev_config import (
+            StyleTTS2Config,
+        )
+        from .ev_config.translation import (
+            to_native_config,
+        )
+        from .lightning import (
+            StyleTTS2DataModule,
+            StyleTTS2Module,
+        )
 
     config_file: Path = kwargs["config_file"]
     config_args: list[str] = kwargs.get("config_args", [])

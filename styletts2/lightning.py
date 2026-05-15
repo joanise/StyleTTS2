@@ -34,21 +34,16 @@ from .utils import (
 class StyleTTS2DataModule(L.LightningDataModule):
     def __init__(self, config, load_for_everyvoice=False):
         super().__init__()
-        # Accept either a native dict or a StyleTTS2Config (EveryVoice mode).
-        from .ev_config import (
-            StyleTTS2Config,
-        )
-        from .ev_config.translation import (
-            to_native_config,
-        )
 
         self.load_for_everyvoice = load_for_everyvoice
 
         if load_for_everyvoice:
-            self._ev_text_config = config['ev_config'].text
-            self._pretrained_symbols = config['ev_config'].pretrained.pretrained_symbols
-            self._preprocessed_dir = str(config['ev_config'].preprocessing.save_dir)
-            self._output_sampling_rate = config['ev_config'].preprocessing.audio.output_sampling_rate
+            self._ev_text_config = config["ev_config"].text
+            self._pretrained_symbols = config["ev_config"].pretrained.pretrained_symbols
+            self._preprocessed_dir = str(config["ev_config"].preprocessing.save_dir)
+            self._output_sampling_rate = config[
+                "ev_config"
+            ].preprocessing.audio.output_sampling_rate
             self.config = config
         else:
             self._ev_text_config = None
@@ -186,6 +181,9 @@ class StyleTTS2Module(L.LightningModule):
     # ------------------------------------------------------------------
 
     def setup(self, stage=None):
+        if stage == "predict":
+            return
+
         p = self._slmadv_params
         self._slmadv = SLMAdversarialLoss(
             self,
@@ -430,9 +428,9 @@ class StyleTTS2Module(L.LightningModule):
                     ref_s = None
                     if self.multispeaker and b["ref_mels"] is not None:
                         ref_mels = b["ref_mels"].to(self.device)
-                        ref_ss = self.style_encoder(ref_mels.unsqueeze(1))
-                        ref_sp = self.predictor_encoder(ref_mels.unsqueeze(1))
-                        ref_s = torch.cat([ref_ss, ref_sp], dim=1)
+                        style_enc = self.style_encoder(ref_mels.unsqueeze(1))
+                        predictor_enc = self.predictor_encoder(ref_mels.unsqueeze(1))
+                        ref_s = torch.cat([style_enc, predictor_enc], dim=1)
 
                     t_en = self.text_encoder(texts, input_lengths, text_mask)
 
@@ -523,7 +521,9 @@ class StyleTTS2Module(L.LightningModule):
             rs = np.random.randint(0, half_len - mel_len)
             en.append(asr[bib, :, rs : rs + mel_len])
             gt.append(mels[bib, :, rs * 2 : (rs + mel_len) * 2])
-            y = waves[bib][rs * 2 * self.hop_length : (rs + mel_len) * 2 * self.hop_length]
+            y = waves[bib][
+                rs * 2 * self.hop_length : (rs + mel_len) * 2 * self.hop_length
+            ]
             wav.append(torch.from_numpy(y).to(device))
             if p is not None:
                 p_en.append(p[bib, :, rs : rs + mel_len])
@@ -729,9 +729,9 @@ class StyleTTS2Module(L.LightningModule):
 
             ref = None
             if self.multispeaker:
-                ref_ss = self.style_encoder(ref_mels.unsqueeze(1))
-                ref_sp = self.predictor_encoder(ref_mels.unsqueeze(1))
-                ref = torch.cat([ref_ss, ref_sp], dim=1)
+                style_enc = self.style_encoder(ref_mels.unsqueeze(1))
+                predictor_enc = self.predictor_encoder(ref_mels.unsqueeze(1))
+                ref = torch.cat([style_enc, predictor_enc], dim=1)
 
         # Per-utterance style (adaptive avgpool prevents batching)
         ss, gs = [], []
@@ -1000,6 +1000,140 @@ class StyleTTS2Module(L.LightningModule):
             on_step=True,
             on_epoch=False,
         )
+
+    # ------------------------------------------------------------------
+    # Inference helpers
+    # ------------------------------------------------------------------
+
+    @torch.no_grad()
+    def _encode_reference(self, ref_mel: "torch.Tensor") -> "torch.Tensor":
+        """Compute a combined style+predictor encoding from a normalised mel.
+
+        ``ref_mel`` should be shape ``[1, n_mels, T]`` and already on
+        ``self.device``.  Returns ``ref_s`` of shape ``[1, 256]``.
+        """
+        style_enc = self.style_encoder(ref_mel.unsqueeze(1))
+        predictor_enc = self.predictor_encoder(ref_mel.unsqueeze(1))
+        return torch.cat([style_enc, predictor_enc], dim=1)
+
+    @torch.no_grad()
+    def _synthesize_text(
+        self,
+        tokens: "torch.Tensor",
+        input_lengths: "torch.Tensor",
+        ref_mel: "torch.Tensor | None" = None,
+        diffusion_steps: int = 5,
+        embedding_scale: float = 1.0,
+        acoustic_blend: float = 0.3,
+        prosody_blend: float = 0.7,
+        ref_s: "torch.Tensor | None" = None,
+    ):
+        """Run a single text→waveform forward pass.
+
+        All tensors must already be on ``self.device``.
+        Exactly one of ``ref_mel`` or ``ref_s`` must be supplied.
+        Returns a float32 numpy waveform (shape ``[T]``).
+        """
+        if ref_s is None:
+            assert ref_mel is not None, "Either ref_mel or ref_s must be provided"
+            ref_s = self._encode_reference(ref_mel)
+
+        text_mask = length_to_mask(input_lengths).to(self.device)
+
+        bert_dur = self.bert(tokens, attention_mask=(~text_mask).int())
+        d_en = self.bert_encoder(bert_dur).transpose(-1, -2)
+        t_en = self.text_encoder(tokens, input_lengths, text_mask)
+
+        noise = torch.randn((1, 256), device=self.device).unsqueeze(1)
+        s_pred = self._sampler(
+            noise=noise,
+            embedding=bert_dur,
+            embedding_scale=embedding_scale,
+            num_steps=diffusion_steps,
+            features=ref_s,
+        ).squeeze(1)
+
+        ref = acoustic_blend * s_pred[:, :128] + (1 - acoustic_blend) * ref_s[:, :128]
+        s = prosody_blend * s_pred[:, 128:] + (1 - prosody_blend) * ref_s[:, 128:]
+
+        T = int(input_lengths[0].item())
+        tm = text_mask[0, :T].unsqueeze(0)
+        d = self.predictor.text_encoder(
+            d_en[0, :, :T].unsqueeze(0), s, input_lengths, tm
+        )
+        x, _ = self.predictor.lstm(d)
+        duration = torch.sigmoid(self.predictor.duration_proj(x)).sum(axis=-1)
+        pred_dur = torch.round(duration.squeeze()).clamp(min=1)
+        if pred_dur.ndim == 0:
+            pred_dur = pred_dur.unsqueeze(0)
+        pred_dur[-1] += 5
+
+        pred_aln = torch.zeros(T, int(pred_dur.sum().item()), device=self.device)
+        c = 0
+        for i in range(T):
+            pred_aln[i, c : c + int(pred_dur[i].item())] = 1
+            c += int(pred_dur[i].item())
+
+        en = d.transpose(-1, -2) @ pred_aln.unsqueeze(0)
+        F0_pred, N_pred = self.predictor.F0Ntrain(en, s)
+        out = self.decoder(
+            t_en[0, :, :T].unsqueeze(0) @ pred_aln.unsqueeze(0),
+            F0_pred,
+            N_pred,
+            ref.squeeze().unsqueeze(0),
+        )
+        return out.cpu().numpy().squeeze()
+
+    @torch.no_grad()
+    def predict_step(self, batch, batch_idx):
+        """Lightning predict step for batch synthesis.
+
+        Expects ``batch`` to be a dict with keys: ``raw_text``, ``basename``,
+        ``speaker``, ``language``, ``reference_path``, and optional synthesis
+        control params (``diffusion_steps``, ``embedding_scale``,
+        ``acoustic_blend``, ``prosody_blend``).
+        """
+        from .text_utils import TextCleaner
+        from .utils import _load_reference_mel
+
+        device = self.device
+        raw_text = batch["raw_text"]
+
+        text_cleaner = TextCleaner()
+        tokens = torch.LongTensor(text_cleaner(raw_text)).unsqueeze(0).to(device)
+        if tokens.numel() == 0:
+            return None
+
+        input_lengths = torch.LongTensor([tokens.size(1)]).to(device)
+
+        if not hasattr(self, "_mel_transform"):
+            from .utils import make_mel_transform
+
+            self._mel_transform = make_mel_transform(self.config).to(device)
+
+        ref_mel = _load_reference_mel(
+            batch["reference_path"], self.sr, self._mel_transform
+        ).to(device)
+
+        wav = self._synthesize_text(
+            tokens,
+            input_lengths,
+            ref_mel=ref_mel,
+            diffusion_steps=batch.get("diffusion_steps", 5),
+            embedding_scale=batch.get("embedding_scale", 1.0),
+            acoustic_blend=batch.get("acoustic_blend", 0.3),
+            prosody_blend=batch.get("prosody_blend", 0.7),
+        )
+
+        return {
+            "wav": wav,
+            "sample_rate": self.sr,
+            "basename": batch["basename"],
+            "speaker": batch["speaker"],
+            "language": batch["language"],
+            "raw_text": raw_text,
+            "duration_seconds": len(wav) / self.sr,
+        }
 
     # ------------------------------------------------------------------
     # Validation

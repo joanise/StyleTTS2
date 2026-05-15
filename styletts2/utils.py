@@ -21,6 +21,21 @@ def make_mel_transform(config):
     )
 
 
+def _load_reference_mel(path, target_sr, mel_transform):
+    """Load and normalise a reference audio file into a mel spectrogram.
+
+    Returns a tensor of shape ``[1, n_mels, T]`` on the same device as
+    ``mel_transform``.
+    """
+    wave, sr = torchaudio.load(path)
+    wave = wave.mean(0)
+    if sr != target_sr:
+        wave = torchaudio.functional.resample(wave, sr, target_sr)
+    wave = wave.to(next(mel_transform.buffers()).device)
+    mel = mel_transform(wave)
+    return (torch.log(1e-5 + mel.unsqueeze(0)) - MEL_MEAN) / MEL_STD
+
+
 def maximum_path(neg_cent, mask):
     """Cython optimized version.
     neg_cent: [b, t_t, t_s]
