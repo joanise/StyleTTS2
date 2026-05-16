@@ -17,6 +17,7 @@ from .models import build_model, load_ASR_models, load_checkpoint, load_F0_model
 from .modules.diffusion.sampler import ADPM2Sampler, DiffusionSampler, KarrasSchedule
 from .modules.slmadv import SLMAdversarialLoss
 from .pretrained.plbert.util import load_plbert
+from .text_utils import symbols as _text_symbols
 from .utils import (
     get_data_path_list,
     get_image,
@@ -393,8 +394,13 @@ class StyleTTS2Module(L.LightningModule):
             )
             self._running_std.clear()
 
+    _MAX_VAL_AUDIO = 7
+
+    def on_validation_epoch_start(self):
+        self._val_batch = None
+
     def on_validation_epoch_end(self):
-        if not self.trainer.is_global_zero or not hasattr(self, "_val_batch"):
+        if not self.trainer.is_global_zero or self._val_batch is None:
             return
 
         tb = self.logger.experiment
@@ -406,7 +412,7 @@ class StyleTTS2Module(L.LightningModule):
                 tb.add_figure(
                     "eval/attn", get_image(b["s2s_attn"][0].numpy().squeeze()), epoch
                 )
-                for bib in range(min(len(b["asr"]), 7)):
+                for bib in range(min(len(b["asr"]), self._MAX_VAL_AUDIO)):
                     mel_length = int(b["mel_input_length"][bib].item())
                     gt = b["mels"][bib, :, :mel_length].unsqueeze(0).to(self.device)
                     en = (
@@ -425,6 +431,11 @@ class StyleTTS2Module(L.LightningModule):
                         sample_rate=self.sr,
                     )
                     if epoch == 0:
+                        text_label = "".join(
+                            _text_symbols[i]
+                            for i in b["texts"][bib, : b["input_lengths"][bib]].tolist()
+                        )
+                        tb.add_text(f"text/y{bib}", text_label, epoch)
                         tb.add_audio(
                             f"gt/y{bib}",
                             b["waves"][bib].squeeze(),
@@ -434,7 +445,7 @@ class StyleTTS2Module(L.LightningModule):
 
             else:
                 if epoch < self.joint_epoch and self.mode != "finetune":
-                    for bib in range(min(len(b["asr"]), 6)):
+                    for bib in range(min(len(b["asr"]), self._MAX_VAL_AUDIO)):
                         mel_length = int(b["mel_input_length"][bib].item())
                         gt = b["mels"][bib, :, :mel_length].unsqueeze(0).to(self.device)
                         en = (
@@ -447,6 +458,7 @@ class StyleTTS2Module(L.LightningModule):
                         s = self.style_encoder(gt.unsqueeze(1))
                         real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
                         y_rec = self.decoder(en, F0_real, real_norm, s)
+
                         tb.add_audio(
                             f"eval/y{bib}",
                             y_rec.cpu().numpy().squeeze(),
@@ -470,6 +482,13 @@ class StyleTTS2Module(L.LightningModule):
                         )
 
                         if epoch == 0:
+                            text_label = "".join(
+                                _text_symbols[i]
+                                for i in b["texts"][
+                                    bib, : b["input_lengths"][bib]
+                                ].tolist()
+                            )
+                            tb.add_text(f"text/y{bib}", text_label, epoch)
                             tb.add_audio(
                                 f"gt/y{bib}",
                                 b["waves"][bib].squeeze(),
@@ -493,7 +512,7 @@ class StyleTTS2Module(L.LightningModule):
 
                     t_en = self.text_encoder(texts, input_lengths, text_mask)
 
-                    for bib in range(min(d_en.size(0), 6)):
+                    for bib in range(min(d_en.size(0), self._MAX_VAL_AUDIO)):
                         noise = torch.randn((1, 256), device=self.device).unsqueeze(1)
                         sampler_kwargs = dict(
                             noise=noise,
@@ -546,6 +565,20 @@ class StyleTTS2Module(L.LightningModule):
                             epoch,
                             sample_rate=self.sr,
                         )
+                        if epoch == 0:
+                            text_label = "".join(
+                                _text_symbols[i]
+                                for i in b["texts"][
+                                    bib, : b["input_lengths"][bib]
+                                ].tolist()
+                            )
+                            tb.add_text(f"text/y{bib}", text_label, epoch)
+                            tb.add_audio(
+                                f"gt/y{bib}",
+                                b["waves"][bib].squeeze(),
+                                epoch,
+                                sample_rate=self.sr,
+                            )
 
     # ------------------------------------------------------------------
     # Optimizer helpers
@@ -1252,13 +1285,34 @@ class StyleTTS2Module(L.LightningModule):
         )
 
         if self.trainer.is_global_zero:
-            self._val_batch = dict(
+            new = dict(
                 s2s_attn=s2s_attn.detach().cpu(),
                 asr=asr.detach().cpu(),
                 mels=mels.detach().cpu(),
                 mel_input_length=mel_input_length.detach().cpu(),
                 waves=waves,
+                texts=texts.detach().cpu(),
+                input_lengths=input_lengths.detach().cpu(),
             )
+            if self._val_batch is None:
+                self._val_batch = new
+            elif len(self._val_batch["asr"]) < self._MAX_VAL_AUDIO:
+                n_have = len(self._val_batch["asr"])
+                n_take = min(len(new["asr"]), self._MAX_VAL_AUDIO - n_have)
+                for key in (
+                    "s2s_attn",
+                    "asr",
+                    "mels",
+                    "mel_input_length",
+                    "texts",
+                    "input_lengths",
+                ):
+                    self._val_batch[key] = torch.cat(
+                        [self._val_batch[key], new[key][:n_take]], dim=0
+                    )
+                self._val_batch["waves"] = (
+                    self._val_batch["waves"] + new["waves"][:n_take]
+                )
 
     def _validate_second(self, batch, batch_idx):
         device = self.device
@@ -1331,7 +1385,7 @@ class StyleTTS2Module(L.LightningModule):
         )
 
         if self.trainer.is_global_zero:
-            self._val_batch = dict(
+            new = dict(
                 asr=asr.detach().cpu(),
                 mels=mels.detach().cpu(),
                 mel_input_length=mel_input_length.detach().cpu(),
@@ -1344,3 +1398,29 @@ class StyleTTS2Module(L.LightningModule):
                 text_mask=text_mask.detach().cpu(),
                 ref_mels=ref_mels.detach().cpu() if self.multispeaker else None,
             )
+            if self._val_batch is None:
+                self._val_batch = new
+            elif len(self._val_batch["asr"]) < self._MAX_VAL_AUDIO:
+                n_have = len(self._val_batch["asr"])
+                n_take = min(len(new["asr"]), self._MAX_VAL_AUDIO - n_have)
+                for key in (
+                    "asr",
+                    "mels",
+                    "mel_input_length",
+                    "p",
+                    "d_en",
+                    "bert_dur",
+                    "texts",
+                    "input_lengths",
+                    "text_mask",
+                ):
+                    self._val_batch[key] = torch.cat(
+                        [self._val_batch[key], new[key][:n_take]], dim=0
+                    )
+                self._val_batch["waves"] = (
+                    self._val_batch["waves"] + new["waves"][:n_take]
+                )
+                if self.multispeaker and self._val_batch["ref_mels"] is not None:
+                    self._val_batch["ref_mels"] = torch.cat(
+                        [self._val_batch["ref_mels"], new["ref_mels"][:n_take]], dim=0
+                    )
