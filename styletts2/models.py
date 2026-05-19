@@ -712,36 +712,55 @@ class DurationEncoder(nn.Module):
         return mask
 
 
-def load_F0_models(path):
-    # load F0 model
+def _resolve_pretrained_file(repo_id: str, filename: str, local_path=None) -> str:
+    """Return a local path to a pretrained file, downloading from HuggingFace if needed."""
+    if local_path is not None:
+        return str(local_path)
+    from huggingface_hub import hf_hub_download
 
+    return hf_hub_download(repo_id, filename=filename)
+
+
+def build_F0_model_shape():
+    """Construct JDCNet with uninitialized weights (for checkpoint loading)."""
+    return JDCNet(num_class=1, seq_len=192).train()
+
+
+def load_F0_model(config: dict):
+    path = _resolve_pretrained_file(
+        config["repo_id"], config["filename"], config.get("local_path")
+    )
     F0_model = JDCNet(num_class=1, seq_len=192)
     params = torch.load(path, map_location="cpu", weights_only=False)["net"]
     F0_model.load_state_dict(params)
-    _ = F0_model.train()
-
-    return F0_model
+    return F0_model.train()
 
 
-def load_ASR_models(ASR_MODEL_PATH, ASR_MODEL_CONFIG):
-    # load ASR model
-    def _load_config(path):
-        with open(path) as f:
-            config = yaml.safe_load(f)
-        model_config = config["model_params"]
-        return model_config
+def build_ASR_model_shape(config: dict):
+    """Construct ASRCNN from its config file only, without loading pretrained weights."""
+    config_path = _resolve_pretrained_file(
+        config["repo_id"], config["config_filename"], config.get("local_config")
+    )
+    with open(config_path) as f:
+        model_config = yaml.safe_load(f)["model_params"]
+    return ASRCNN(**model_config).train()
 
-    def _load_model(model_config, model_path):
-        model = ASRCNN(**model_config)
-        params = torch.load(model_path, map_location="cpu", weights_only=False)["model"]
-        model.load_state_dict(params)
-        return model
 
-    asr_model_config = _load_config(ASR_MODEL_CONFIG)
-    asr_model = _load_model(asr_model_config, ASR_MODEL_PATH)
-    _ = asr_model.train()
+def load_ASR_model(config: dict):
+    config_path = _resolve_pretrained_file(
+        config["repo_id"], config["config_filename"], config.get("local_config")
+    )
+    model_path = _resolve_pretrained_file(
+        config["repo_id"], config["checkpoint_filename"], config.get("local_checkpoint")
+    )
 
-    return asr_model
+    with open(config_path) as f:
+        model_config = yaml.safe_load(f)["model_params"]
+
+    model = ASRCNN(**model_config)
+    params = torch.load(model_path, map_location="cpu", weights_only=False)["model"]
+    model.load_state_dict(params)
+    return model.train()
 
 
 def build_model(args, text_aligner, pitch_extractor, bert):

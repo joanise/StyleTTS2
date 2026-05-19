@@ -61,11 +61,10 @@ def to_native_config(config: StyleTTS2Config) -> dict:
         ),
         "second_stage_load_pretrained": tr.second_stage_load_pretrained,
         "load_only_params": tr.load_only_params,
-        # --- pretrained backbone paths ---
-        "F0_path": str(pre.f0_path),
-        "ASR_config": str(pre.asr_config),
-        "ASR_path": str(pre.asr_path),
-        "PLBERT_dir": str(pre.plbert_dir),
+        # --- pretrained backbone sources ---
+        "pretrained_f0": pre.f0.model_dump(mode="json"),
+        "pretrained_asr": pre.asr.model_dump(mode="json"),
+        "pretrained_plbert": pre.plbert.model_dump(mode="json"),
         # --- data ---
         "data_params": {
             "train_data": str(tr.training_filelist),

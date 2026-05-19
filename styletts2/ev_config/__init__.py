@@ -32,28 +32,87 @@ def _default_pretrained_symbols() -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-class StyleTTS2PretrainedConfig(ConfigModel):
-    """Paths to the frozen pretrained models bundled with StyleTTS2."""
+class StyleTTS2JDCConfig(ConfigModel):
+    """Source for the JDC F0 extractor checkpoint."""
 
-    f0_path: PossiblyRelativePath = Field(
-        default="styletts2/pretrained/jdc/bst.t7",
-        validate_default=True,
-        description="Path to the JDC F0 extractor checkpoint.",
+    repo_id: str = Field(
+        default="everyvoice/styletts2-jdc-f0",
+        description="HuggingFace repo ID for the JDC F0 extractor.",
     )
-    asr_config: PossiblyRelativePath = Field(
-        default="styletts2/pretrained/asr/config.yml",
-        validate_default=True,
-        description="Path to the ASR model config.",
+    filename: str = Field(
+        default="bst.t7",
+        description="Filename of the checkpoint within the HuggingFace repo.",
     )
-    asr_path: PossiblyRelativePath = Field(
-        default="styletts2/pretrained/asr/epoch_00080.pth",
-        validate_default=True,
-        description="Path to the ASR model checkpoint.",
+    local_path: Optional[Path] = Field(
+        default=None,
+        description="Local path to the checkpoint. If set, overrides repo_id/filename.",
     )
-    plbert_dir: PossiblyRelativePath = Field(
-        default="styletts2/pretrained/plbert",
-        validate_default=True,
-        description="Directory containing the PLBERT checkpoint and config.",
+
+
+class StyleTTS2ASRConfig(ConfigModel):
+    """Source for the ASR text-aligner checkpoint."""
+
+    repo_id: str = Field(
+        default="everyvoice/styletts2-asr-aligner",
+        description="HuggingFace repo ID for the ASR text-aligner.",
+    )
+    checkpoint_filename: str = Field(
+        default="epoch_00080.pth",
+        description="Filename of the model checkpoint within the HuggingFace repo.",
+    )
+    config_filename: str = Field(
+        default="config.yml",
+        description="Filename of the model config within the HuggingFace repo.",
+    )
+    local_checkpoint: Optional[Path] = Field(
+        default=None,
+        description="Local path to the checkpoint file. If set, overrides repo_id/checkpoint_filename.",
+    )
+    local_config: Optional[Path] = Field(
+        default=None,
+        description="Local path to the config file. If set, overrides repo_id/config_filename.",
+    )
+
+
+class StyleTTS2PLBERTConfig(ConfigModel):
+    """Source for the PLBERT text encoder checkpoint."""
+
+    repo_id: str = Field(
+        default="papercup-ai/multilingual-pl-bert",
+        description="HuggingFace repo ID for the PLBERT text encoder.",
+    )
+    checkpoint_filename: str = Field(
+        default="step_1000000.t7",
+        description="Filename of the checkpoint within the HuggingFace repo.",
+    )
+    config_filename: str = Field(
+        default="config.yml",
+        description="Filename of the model config within the HuggingFace repo.",
+    )
+    local_checkpoint: Optional[Path] = Field(
+        default=None,
+        description="Local path to the checkpoint file. If set, overrides repo_id/checkpoint_filename.",
+    )
+    local_config: Optional[Path] = Field(
+        default=None,
+        description="Local path to the config file. If set, overrides repo_id/config_filename.",
+    )
+
+
+class StyleTTS2PretrainedConfig(ConfigModel):
+    """Sources for the frozen pretrained models used by StyleTTS2."""
+
+    f0: StyleTTS2JDCConfig = Field(
+        default_factory=StyleTTS2JDCConfig,
+        description="JDC F0 extractor source (HuggingFace repo or local path).",
+    )
+    asr: StyleTTS2ASRConfig = Field(
+        default_factory=StyleTTS2ASRConfig,
+        description="ASR text-aligner source (HuggingFace repo or local paths).",
+    )
+    plbert: StyleTTS2PLBERTConfig = Field(
+        default_factory=StyleTTS2PLBERTConfig,
+        description="PLBERT text encoder source (HuggingFace repo or local paths).",
     )
     pretrained_symbols: list[str] = Field(
         default_factory=_default_pretrained_symbols,

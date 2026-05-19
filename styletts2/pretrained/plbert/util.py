@@ -1,4 +1,4 @@
-import os
+from collections import OrderedDict
 
 import torch
 import yaml
@@ -7,38 +7,42 @@ from transformers import AlbertConfig, AlbertModel
 
 class CustomAlbert(AlbertModel):
     def forward(self, *args, **kwargs):
-        # Call the original forward method
         outputs = super().forward(*args, **kwargs)
-
-        # Only return the last_hidden_state
         return outputs.last_hidden_state
 
 
-def load_plbert(log_dir):
-    config_path = os.path.join(log_dir, "config.yml")
-    plbert_config = yaml.safe_load(open(config_path))
+def _resolve(repo_id: str, filename: str, local_path=None) -> str:
+    if local_path is not None:
+        return str(local_path)
+    from huggingface_hub import hf_hub_download
 
+    return hf_hub_download(repo_id, filename=filename)
+
+
+def build_plbert_shape(config: dict):
+    """Construct PLBERT from its config file only, without loading pretrained weights."""
+    config_path = _resolve(
+        config["repo_id"], config["config_filename"], config.get("local_config")
+    )
+    plbert_config = yaml.safe_load(open(config_path))
+    albert_base_configuration = AlbertConfig(**plbert_config["model_params"])
+    return CustomAlbert(albert_base_configuration)
+
+
+def load_plbert(config: dict):
+    config_path = _resolve(
+        config["repo_id"], config["config_filename"], config.get("local_config")
+    )
+    ckpt_path = _resolve(
+        config["repo_id"], config["checkpoint_filename"], config.get("local_checkpoint")
+    )
+
+    plbert_config = yaml.safe_load(open(config_path))
     albert_base_configuration = AlbertConfig(**plbert_config["model_params"])
     bert = CustomAlbert(albert_base_configuration)
 
-    # files = os.listdir(log_dir)
-    ckpts = []
-    for f in os.listdir(log_dir):
-        if f.startswith("step_"):
-            ckpts.append(f)
-
-    iters = [
-        int(f.split("_")[-1].split(".")[0])
-        for f in ckpts
-        if os.path.isfile(os.path.join(log_dir, f))
-    ]
-    iters = sorted(iters)[-1]
-
-    checkpoint = torch.load(
-        log_dir + "/step_" + str(iters) + ".t7", map_location="cpu", weights_only=False
-    )
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     state_dict = checkpoint["net"]
-    from collections import OrderedDict
 
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():

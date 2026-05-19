@@ -14,10 +14,17 @@ from torch.optim.lr_scheduler import OneCycleLR
 
 from .dataset import build_dataloader
 from .losses import DiscriminatorLoss, GeneratorLoss, MultiResolutionSTFTLoss, WavLMLoss
-from .models import build_model, load_ASR_models, load_checkpoint, load_F0_models
+from .models import (
+    build_ASR_model_shape,
+    build_F0_model_shape,
+    build_model,
+    load_ASR_model,
+    load_checkpoint,
+    load_F0_model,
+)
 from .modules.diffusion.sampler import ADPM2Sampler, DiffusionSampler, KarrasSchedule
 from .modules.slmadv import SLMAdversarialLoss
-from .pretrained.plbert.util import load_plbert
+from .pretrained.plbert.util import build_plbert_shape, load_plbert
 from .utils import (
     get_data_path_list,
     get_image,
@@ -161,7 +168,7 @@ class StyleTTS2Module(L.LightningModule):
     # Lightning hooks
     # ------------------------------------------------------------------
 
-    def initialize_from_config(self, config):
+    def initialize_from_config(self, config, load_pretrained_weights=True):
         # Core hyper-parameters
         self.sr = config["preprocess_params"].get("sr", 24000)
         self.hop_length = config["preprocess_params"]["spect_params"]["hop_length"]
@@ -177,10 +184,17 @@ class StyleTTS2Module(L.LightningModule):
         self.diff_epoch = getattr(loss_params, "diff_epoch", 0)
         self.joint_epoch = getattr(loss_params, "joint_epoch", 0)
 
-        # Build pretrained backbones then the full model
-        text_aligner = load_ASR_models(config["ASR_path"], config["ASR_config"])
-        pitch_extractor = load_F0_models(config["F0_path"])
-        plbert = load_plbert(config["PLBERT_dir"])
+        # Build pretrained backbones then the full model.
+        # When loading from a checkpoint, skip downloading pretrained weights —
+        # load_state_dict will overwrite them from the checkpoint anyway.
+        if load_pretrained_weights:
+            text_aligner = load_ASR_model(config["pretrained_asr"])
+            pitch_extractor = load_F0_model(config["pretrained_f0"])
+            plbert = load_plbert(config["pretrained_plbert"])
+        else:
+            text_aligner = build_ASR_model_shape(config["pretrained_asr"])
+            pitch_extractor = build_F0_model_shape()
+            plbert = build_plbert_shape(config["pretrained_plbert"])
         # TODO: model_params passes an incorrect value for n_symbols in the text embedding
         nets = build_model(model_params, text_aligner, pitch_extractor, plbert)
         # Register every sub-network as a direct attribute so Lightning / DDP
@@ -314,7 +328,7 @@ class StyleTTS2Module(L.LightningModule):
         self.config = hp["config"]
         self.mode = hp.get("mode", self.mode)
 
-        self.initialize_from_config(self.config)
+        self.initialize_from_config(self.config, load_pretrained_weights=False)
 
     def on_save_checkpoint(self, checkpoint):
         hp = checkpoint.setdefault("hyper_parameters", {})
