@@ -15,28 +15,20 @@ from everyvoice.model.feature_prediction.FastSpeech2_lightning.fs2.type_definiti
 from loguru import logger
 
 
-def load_styletts2_model(config_file: Path, model_path: Path, mode: str, device):
-    """Load a StyleTTS2 Lightning module and mel transform from a config + checkpoint pair."""
+def load_styletts2_model(model_path: Path, device):
+    """Load a StyleTTS2 Lightning module and mel transform from a checkpoint."""
     import torch
 
-    from .ev_config import (
-        StyleTTS2Config,
-    )
-    from .ev_config.translation import (
-        to_native_config,
-    )
-    from .lightning import (
-        StyleTTS2Module,
-    )
-    from .utils import (
-        make_mel_transform,
-    )
+    from .lightning import StyleTTS2Module
+    from .utils import make_mel_transform
 
-    ev_config = StyleTTS2Config.load_config_from_path(config_file)
-    native_config = to_native_config(ev_config)
+    state = torch.load(model_path, map_location="cpu", weights_only=False)
+    hp = state.get("hyper_parameters", {})
+    native_config = hp["config"]
+    mode = hp.get("mode", "second")
 
     module = StyleTTS2Module(native_config, mode=mode)
-    state = torch.load(model_path, map_location="cpu", weights_only=False)
+    module.check_and_upgrade_checkpoint(state)
     module.load_state_dict(state["state_dict"])
     module.eval()
     module.to(device)
@@ -130,13 +122,6 @@ app = typer.Typer(pretty_exceptions_show_locals=False)
     short_help="Synthesize audio from text using a trained StyleTTS2 model",
 )
 def synthesize(
-    config_file: Path = typer.Argument(
-        ...,
-        help="Path to your StyleTTS2 EveryVoice config file (everyvoice-text-to-wav.yaml).",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-    ),
     model_path: Path = typer.Argument(
         ...,
         help="Path to a trained StyleTTS2 checkpoint (.ckpt).",
@@ -167,11 +152,6 @@ def synthesize(
         [SynthesizeOutputFormats.wav],
         "--output-type",
         help="Output format(s) to produce.",
-    ),
-    mode: str = typer.Option(
-        "second",
-        "--mode",
-        help="Checkpoint mode: 'second' or 'finetune'.",
     ),
     accelerator: str = typer.Option(
         "auto",
@@ -215,8 +195,7 @@ def synthesize(
 
     Example:
 
-    **everyvoice synthesize text-to-wav config/everyvoice-text-to-wav.yaml \\
-        logs_and_checkpoints/.../last.ckpt \\
+    **everyvoice synthesize text-to-wav logs_and_checkpoints/.../last.ckpt \\
         --reference path/to/reference.wav \\
         --text "Hello world" --text "How are you?"**
     """
@@ -242,7 +221,7 @@ def synthesize(
     )
 
     logger.info(f"Loading StyleTTS2 model from {model_path}")
-    module, mel_transform = load_styletts2_model(config_file, model_path, mode, device)
+    module, mel_transform = load_styletts2_model(model_path, device)
     module._mel_transform = mel_transform
 
     state = torch.load(model_path, map_location="cpu", weights_only=False)

@@ -114,13 +114,25 @@ class StyleTTS2Module(L.LightningModule):
         mode: one of ``'first'``, ``'second'``, or ``'finetune'``.
     """
 
-    def __init__(self, config: dict, mode: str = "first"):
+    _VERSION: str = "1.0"
+
+    def __init__(self, config: dict | None = None, mode: str = "first"):
         super().__init__()
+
         assert mode in ("first", "second", "finetune"), f"Unknown mode: {mode}"
         self.automatic_optimization = False
         self.config = config
         self.mode = mode
 
+        # If loading from a checkpoint, we have to first load an empty config, and then initialize in on_load_checkpoint
+        if self.config is not None:
+            self.initialize_from_config(self.config)
+
+    # ------------------------------------------------------------------
+    # Lightning hooks
+    # ------------------------------------------------------------------
+
+    def initialize_from_config(self, config):
         # Core hyper-parameters
         self.sr = config["preprocess_params"].get("sr", 24000)
         self.hop_length = config["preprocess_params"]["spect_params"]["hop_length"]
@@ -175,10 +187,6 @@ class StyleTTS2Module(L.LightningModule):
 
         # Running std used for diffusion sigma estimation
         self._running_std: list[float] = []
-
-    # ------------------------------------------------------------------
-    # Lightning hooks
-    # ------------------------------------------------------------------
 
     def setup(self, stage=None):
         if stage == "predict":
@@ -269,8 +277,56 @@ class StyleTTS2Module(L.LightningModule):
             for net in (self.text_aligner, self.text_encoder, self.pitch_extractor):
                 net.requires_grad_(False)
 
+    def on_load_checkpoint(self, checkpoint):
+        """Deserialize the checkpoint hyperparameters."""
+        checkpoint = self.check_and_upgrade_checkpoint(checkpoint)
+
+        hp = checkpoint.get("hyper_parameters", {})
+        self.config = hp["config"]
+        self.mode = hp.get("mode", self.mode)
+
+        self.initialize_from_config(self.config)
+
     def on_save_checkpoint(self, checkpoint):
-        checkpoint["model_info"] = {"name": "StyleTTS2", "version": "1.0"}
+        hp = checkpoint.setdefault("hyper_parameters", {})
+        hp["config"] = self.config
+        hp["mode"] = self.mode
+        checkpoint["model_info"] = {
+            "name": self.__class__.__name__,
+            "version": self._VERSION,
+        }
+
+    def check_and_upgrade_checkpoint(self, checkpoint):
+        """
+        Check model's compatibility and possibly upgrade.
+        """
+        from packaging.version import Version
+
+        model_info = checkpoint.get(
+            "model_info",
+            {
+                "name": self.__class__.__name__,
+                "version": "1.0",
+            },
+        )
+
+        ckpt_model_type = model_info.get("name", "MISSING_TYPE")
+        if ckpt_model_type != self.__class__.__name__:
+            raise TypeError(
+                f"""Wrong model type ({ckpt_model_type}), we are expecting a '{self.__class__.__name__}' model"""
+            )
+
+        ckpt_version = Version(model_info.get("version", "0.0"))
+        if ckpt_version > Version(self._VERSION):
+            raise ValueError(
+                "Your model was created with a newer version of EveryVoice, please update your software."
+            )
+        # Successively convert model checkpoints to newer version.
+        if ckpt_version < Version("1.0"):
+            # Upgrading from 0.0 to 1.0 requires no changes; future versions might require changes
+            checkpoint["model_info"]["version"] = "1.0"
+
+        return checkpoint
 
     def configure_optimizers(self):
         opt_cfg = Munch(self.config["optimizer_params"])
