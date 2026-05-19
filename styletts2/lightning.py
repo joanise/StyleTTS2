@@ -269,6 +269,9 @@ class StyleTTS2Module(L.LightningModule):
             for net in (self.text_aligner, self.text_encoder, self.pitch_extractor):
                 net.requires_grad_(False)
 
+    def on_save_checkpoint(self, checkpoint):
+        checkpoint["model_info"] = {"name": "StyleTTS2", "version": "1.0"}
+
     def configure_optimizers(self):
         opt_cfg = Munch(self.config["optimizer_params"])
         # OneCycleLR with pct_start=0, div_factor=1, final_div_factor=1 is a
