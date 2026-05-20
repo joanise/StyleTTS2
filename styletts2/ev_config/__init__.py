@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Annotated, Any, Optional
 
@@ -15,9 +16,23 @@ from everyvoice.model.vocoder.HiFiGAN_iSTFT_lightning.hfgl.config import (
     HiFiGANModelConfig,
 )
 from everyvoice.utils import load_config_from_json_or_yaml_path
-from pydantic import Field, FilePath, ValidationInfo, model_validator
+from pydantic import Field, FilePath, ValidationInfo, field_validator, model_validator
 
 LATEST_VERSION: str = "0.1"
+
+_LOCAL_PATH_WARNING = (
+    " Warning: this path is expanded (via os.path.expandvars and os.path.expanduser)"
+    " when the config is loaded, and the resolved absolute path is what gets embedded in saved checkpoints."
+    " This may make your checkpoints less portable to other machines."
+    " Environment variables (e.g. $HOME or ${MY_MODELS}) and '~' are supported."
+)
+
+
+def _expand_local_path(v: Any) -> Any:
+    """Expand ~ and environment variables in a path string before pydantic coerces it to Path."""
+    if isinstance(v, str):
+        return os.path.expandvars(os.path.expanduser(v))
+    return v
 
 
 def _default_pretrained_symbols() -> list[str]:
@@ -45,8 +60,14 @@ class StyleTTS2JDCConfig(ConfigModel):
     )
     local_path: Optional[Path] = Field(
         default=None,
-        description="Local path to the checkpoint. If set, overrides repo_id/filename.",
+        description="Local path to the checkpoint. If set, overrides repo_id/filename."
+        + _LOCAL_PATH_WARNING,
     )
+
+    @field_validator("local_path", mode="before")
+    @classmethod
+    def expand_local_path(cls, v: Any) -> Any:
+        return _expand_local_path(v)
 
 
 class StyleTTS2ASRConfig(ConfigModel):
@@ -66,12 +87,19 @@ class StyleTTS2ASRConfig(ConfigModel):
     )
     local_checkpoint: Optional[Path] = Field(
         default=None,
-        description="Local path to the checkpoint file. If set, overrides repo_id/checkpoint_filename.",
+        description="Local path to the checkpoint file. If set, overrides repo_id/checkpoint_filename."
+        + _LOCAL_PATH_WARNING,
     )
     local_config: Optional[Path] = Field(
         default=None,
-        description="Local path to the config file. If set, overrides repo_id/config_filename.",
+        description="Local path to the config file. If set, overrides repo_id/config_filename."
+        + _LOCAL_PATH_WARNING,
     )
+
+    @field_validator("local_checkpoint", "local_config", mode="before")
+    @classmethod
+    def expand_local_paths(cls, v: Any) -> Any:
+        return _expand_local_path(v)
 
 
 class StyleTTS2PLBERTConfig(ConfigModel):
@@ -91,12 +119,19 @@ class StyleTTS2PLBERTConfig(ConfigModel):
     )
     local_checkpoint: Optional[Path] = Field(
         default=None,
-        description="Local path to the checkpoint file. If set, overrides repo_id/checkpoint_filename.",
+        description="Local path to the checkpoint file. If set, overrides repo_id/checkpoint_filename."
+        + _LOCAL_PATH_WARNING,
     )
     local_config: Optional[Path] = Field(
         default=None,
-        description="Local path to the config file. If set, overrides repo_id/config_filename.",
+        description="Local path to the config file. If set, overrides repo_id/config_filename."
+        + _LOCAL_PATH_WARNING,
     )
+
+    @field_validator("local_checkpoint", "local_config", mode="before")
+    @classmethod
+    def expand_local_paths(cls, v: Any) -> Any:
+        return _expand_local_path(v)
 
 
 class StyleTTS2PretrainedConfig(ConfigModel):
