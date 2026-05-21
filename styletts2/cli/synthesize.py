@@ -19,12 +19,13 @@ def load_styletts2_model(model_path: Path, device):
     """Load a StyleTTS2 Lightning module and mel transform from a checkpoint."""
     import torch
 
-    from .lightning import StyleTTS2Module
-    from .utils import make_mel_transform
+    from ..lightning import StyleTTS2Module
+    from ..utils import make_mel_transform
 
     state = torch.load(model_path, map_location="cpu", weights_only=False)
     hp = state.get("hyper_parameters", {})
     native_config = hp["config"]
+
     mode = hp.get("mode", "second")
 
     module = StyleTTS2Module(native_config, mode=mode)
@@ -51,7 +52,7 @@ def load_reference_style(
     """
     import torch
 
-    from .utils import (
+    from ..utils import (
         _load_reference_mel,
     )
 
@@ -81,10 +82,10 @@ def synthesize_one(
     """
     import torch
 
-    from .text_utils import (
+    from ..text_utils import (
         TextCleaner,
     )
-    from .utils import (
+    from ..utils import (
         _load_reference_mel,
     )
 

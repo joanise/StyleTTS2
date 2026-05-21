@@ -52,13 +52,13 @@ def train(
         from lightning.pytorch.loggers import TensorBoardLogger
         from lightning.pytorch.strategies import DDPStrategy
 
-        from .ev_config import (
+        from ..ev_config import (
             StyleTTS2Config,
         )
-        from .ev_config.translation import (
+        from ..ev_config.translation import (
             to_native_config,
         )
-        from .lightning import (
+        from ..lightning import (
             StyleTTS2DataModule,
             StyleTTS2Module,
         )
