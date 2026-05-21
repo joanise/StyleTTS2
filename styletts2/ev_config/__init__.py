@@ -110,7 +110,7 @@ class StyleTTS2PLBERTConfig(ConfigModel):
         description="HuggingFace repo ID for the PLBERT text encoder.",
     )
     checkpoint_filename: str = Field(
-        default="step_1000000.t7",
+        default="step_1100000.t7",
         description="Filename of the checkpoint within the HuggingFace repo.",
     )
     config_filename: str = Field(
