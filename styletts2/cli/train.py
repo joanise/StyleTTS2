@@ -7,7 +7,6 @@ from typing import Annotated
 
 import typer
 from everyvoice.base_cli.interfaces import train_base_command_interface
-from everyvoice.utils import spinner
 from merge_args import merge_args
 
 
@@ -36,6 +35,8 @@ def train(
     **kwargs,
 ):
     """Train a StyleTTS2 end-to-end TTS model."""
+    from everyvoice.utils import spinner
+
     with spinner():
         import torch
 

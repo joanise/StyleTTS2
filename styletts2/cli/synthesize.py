@@ -12,7 +12,6 @@ import typer
 from everyvoice.model.feature_prediction.FastSpeech2_lightning.fs2.type_definitions import (
     SynthesizeOutputFormats,
 )
-from loguru import logger
 
 
 def load_styletts2_model(model_path: Path, device):
@@ -206,6 +205,7 @@ def synthesize(
         truncate_basename,
     )
     from everyvoice.utils import slugify
+    from loguru import logger
 
     from .utils_heavy import (
         StyleTTS2SynthesisDataModule,

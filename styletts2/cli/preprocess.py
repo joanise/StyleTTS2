@@ -2,7 +2,6 @@ from enum import Enum
 
 import typer
 from everyvoice.base_cli.interfaces import preprocess_base_command_interface
-from everyvoice.utils import spinner
 from merge_args import merge_args
 
 
@@ -22,6 +21,8 @@ def preprocess(
     **kwargs,
 ):
     """Preprocess audio and text data for StyleTTS2 training."""
+    from everyvoice.utils import spinner
+
     with spinner():
         from everyvoice.base_cli.helpers import preprocess_base_command
 
