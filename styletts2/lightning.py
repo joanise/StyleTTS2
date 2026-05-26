@@ -1,6 +1,7 @@
 import copy
 import os
 import random
+from pathlib import Path
 
 import lightning as L
 import numpy as np
@@ -17,7 +18,6 @@ from .models import build_model, load_ASR_models, load_checkpoint, load_F0_model
 from .modules.diffusion.sampler import ADPM2Sampler, DiffusionSampler, KarrasSchedule
 from .modules.slmadv import SLMAdversarialLoss
 from .pretrained.plbert.util import load_plbert
-from .text_utils import symbols as _text_symbols
 from .utils import (
     get_data_path_list,
     get_image,
@@ -26,6 +26,34 @@ from .utils import (
     maximum_path,
     recursive_munch,
 )
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _pad_and_cat(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """Concatenate two tensors along dim 0, zero-padding variable-length dims.
+
+    Different validation batches may have different max sequence lengths (e.g.
+    texts padded to different lengths). torch.cat requires all non-batch dims
+    to match, so we pad the shorter tensor before concatenating.
+    """
+    if a.shape[1:] == b.shape[1:]:
+        return torch.cat([a, b], dim=0)
+    orig_a, orig_b = a.shape, b.shape
+    # F.pad spec is built last-dim-first
+    pad_b = []
+    pad_a = []
+    for d in reversed(range(1, a.dim())):
+        pad_b += [0, max(0, orig_a[d] - orig_b[d])]
+        pad_a += [0, max(0, orig_b[d] - orig_a[d])]
+    if any(p > 0 for p in pad_b):
+        b = F.pad(b, pad_b)
+    if any(p > 0 for p in pad_a):
+        a = F.pad(a, pad_a)
+    return torch.cat([a, b], dim=0)
+
 
 # ---------------------------------------------------------------------------
 # Data module
@@ -424,20 +452,16 @@ class StyleTTS2Module(L.LightningModule):
                     real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
                     y_rec = self.decoder(en, F0_real, real_norm, s)
 
+                    name = b["basenames"][bib]
                     tb.add_audio(
-                        f"eval/y{bib}",
+                        f"eval/{name}",
                         y_rec.cpu().numpy().squeeze(),
                         epoch,
                         sample_rate=self.sr,
                     )
                     if epoch == 0:
-                        text_label = "".join(
-                            _text_symbols[i]
-                            for i in b["texts"][bib, : b["input_lengths"][bib]].tolist()
-                        )
-                        tb.add_text(f"text/y{bib}", text_label, epoch)
                         tb.add_audio(
-                            f"gt/y{bib}",
+                            f"gt/{name}",
                             b["waves"][bib].squeeze(),
                             epoch,
                             sample_rate=self.sr,
@@ -459,8 +483,9 @@ class StyleTTS2Module(L.LightningModule):
                         real_norm = log_norm(gt.unsqueeze(1)).squeeze(1)
                         y_rec = self.decoder(en, F0_real, real_norm, s)
 
+                        name = b["basenames"][bib]
                         tb.add_audio(
-                            f"eval/y{bib}",
+                            f"eval/{name}",
                             y_rec.cpu().numpy().squeeze(),
                             epoch,
                             sample_rate=self.sr,
@@ -475,22 +500,15 @@ class StyleTTS2Module(L.LightningModule):
                         F0_fake, N_fake = self.predictor.F0Ntrain(p_en, s_dur)
                         y_pred = self.decoder(en, F0_fake, N_fake, s)
                         tb.add_audio(
-                            f"pred/y{bib}",
+                            f"pred/{name}",
                             y_pred.cpu().numpy().squeeze(),
                             epoch,
                             sample_rate=self.sr,
                         )
 
                         if epoch == 0:
-                            text_label = "".join(
-                                _text_symbols[i]
-                                for i in b["texts"][
-                                    bib, : b["input_lengths"][bib]
-                                ].tolist()
-                            )
-                            tb.add_text(f"text/y{bib}", text_label, epoch)
                             tb.add_audio(
-                                f"gt/y{bib}",
+                                f"gt/{name}",
                                 b["waves"][bib].squeeze(),
                                 epoch,
                                 sample_rate=self.sr,
@@ -559,22 +577,16 @@ class StyleTTS2Module(L.LightningModule):
                             ref.squeeze().unsqueeze(0),
                         )
 
+                        name = b["basenames"][bib]
                         tb.add_audio(
-                            f"pred/y{bib}",
+                            f"pred/{name}",
                             out.cpu().numpy().squeeze(),
                             epoch,
                             sample_rate=self.sr,
                         )
                         if epoch == 0:
-                            text_label = "".join(
-                                _text_symbols[i]
-                                for i in b["texts"][
-                                    bib, : b["input_lengths"][bib]
-                                ].tolist()
-                            )
-                            tb.add_text(f"text/y{bib}", text_label, epoch)
                             tb.add_audio(
-                                f"gt/y{bib}",
+                                f"gt/{name}",
                                 b["waves"][bib].squeeze(),
                                 epoch,
                                 sample_rate=self.sr,
@@ -651,7 +663,7 @@ class StyleTTS2Module(L.LightningModule):
         device = self.device
         waves = batch[0]
         texts, input_lengths, _, _, mels, mel_input_length, _ = [
-            b.to(device) for b in batch[1:]
+            b.to(device) for b in batch[1:-1]
         ]
 
         with torch.no_grad():
@@ -795,7 +807,7 @@ class StyleTTS2Module(L.LightningModule):
             mels,
             mel_input_length,
             ref_mels,
-        ) = [b.to(device) for b in batch[1:]]
+        ) = [b.to(device) for b in batch[1:-1]]
 
         # -- Frozen inference pass ---------------------------------------
         with torch.no_grad():
@@ -1241,8 +1253,9 @@ class StyleTTS2Module(L.LightningModule):
         device = self.device
         waves = batch[0]
         texts, input_lengths, _, _, mels, mel_input_length, _ = [
-            b.to(device) for b in batch[1:]
+            b.to(device) for b in batch[1:-1]
         ]
+        paths = batch[-1]
 
         mask = length_to_mask(mel_input_length // (2**self.n_down)).to(device)
         text_mask = length_to_mask(input_lengths).to(device)
@@ -1293,6 +1306,7 @@ class StyleTTS2Module(L.LightningModule):
                 waves=waves,
                 texts=texts.detach().cpu(),
                 input_lengths=input_lengths.detach().cpu(),
+                basenames=[Path(p).stem for p in paths],
             )
             if self._val_batch is None:
                 self._val_batch = new
@@ -1307,19 +1321,23 @@ class StyleTTS2Module(L.LightningModule):
                     "texts",
                     "input_lengths",
                 ):
-                    self._val_batch[key] = torch.cat(
-                        [self._val_batch[key], new[key][:n_take]], dim=0
+                    self._val_batch[key] = _pad_and_cat(
+                        self._val_batch[key], new[key][:n_take]
                     )
                 self._val_batch["waves"] = (
                     self._val_batch["waves"] + new["waves"][:n_take]
+                )
+                self._val_batch["basenames"] = (
+                    self._val_batch["basenames"] + new["basenames"][:n_take]
                 )
 
     def _validate_second(self, batch, batch_idx):
         device = self.device
         waves = batch[0]
         texts, input_lengths, _, _, mels, mel_input_length, ref_mels = [
-            b.to(device) for b in batch[1:]
+            b.to(device) for b in batch[1:-1]
         ]
+        paths = batch[-1]
 
         mask = length_to_mask(mel_input_length // (2**self.n_down)).to(device)
         text_mask = length_to_mask(input_lengths).to(device)
@@ -1397,6 +1415,7 @@ class StyleTTS2Module(L.LightningModule):
                 input_lengths=input_lengths.detach().cpu(),
                 text_mask=text_mask.detach().cpu(),
                 ref_mels=ref_mels.detach().cpu() if self.multispeaker else None,
+                basenames=[Path(p).stem for p in paths],
             )
             if self._val_batch is None:
                 self._val_batch = new
@@ -1414,13 +1433,16 @@ class StyleTTS2Module(L.LightningModule):
                     "input_lengths",
                     "text_mask",
                 ):
-                    self._val_batch[key] = torch.cat(
-                        [self._val_batch[key], new[key][:n_take]], dim=0
+                    self._val_batch[key] = _pad_and_cat(
+                        self._val_batch[key], new[key][:n_take]
                     )
                 self._val_batch["waves"] = (
                     self._val_batch["waves"] + new["waves"][:n_take]
                 )
+                self._val_batch["basenames"] = (
+                    self._val_batch["basenames"] + new["basenames"][:n_take]
+                )
                 if self.multispeaker and self._val_batch["ref_mels"] is not None:
-                    self._val_batch["ref_mels"] = torch.cat(
-                        [self._val_batch["ref_mels"], new["ref_mels"][:n_take]], dim=0
+                    self._val_batch["ref_mels"] = _pad_and_cat(
+                        self._val_batch["ref_mels"], new["ref_mels"][:n_take]
                     )
