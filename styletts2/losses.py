@@ -1,7 +1,6 @@
 import torch
 import torch.nn.functional as F
 import torchaudio
-from transformers import AutoModel
 
 from .utils import MEL_MEAN, MEL_STD
 
@@ -218,33 +217,54 @@ class DiscriminatorLoss(torch.nn.Module):
 
 
 class WavLMLoss(torch.nn.Module):
+    # WavLM is a fixed feature extractor used only during training (SLM loss).
+    # It is never needed at synthesis time, so we load it lazily on the first
+    # forward() call.  This means fetch-pretrained is not required when running
+    # everyvoice demo / synthesize, and checkpoints don't need to store WavLM
+    # weights (they never change during training).
 
     def __init__(self, model, wd, model_sr, slm_sr=16000):
         super(WavLMLoss, self).__init__()
+        self._model_id = model
+        self.wavlm = None  # loaded on first use; see _ensure_wavlm()
+        self.wd = wd
+        self.resample = torchaudio.transforms.Resample(model_sr, slm_sr)
+
+    def _ensure_wavlm(self):
+        if self.wavlm is not None:
+            return
         from pathlib import Path
 
         from huggingface_hub.constants import HF_HUB_CACHE
+        from transformers import AutoModel
 
-        _local_dir = Path(HF_HUB_CACHE) / "everyvoice-wavlm" / model.replace("/", "--")
+        _local_dir = (
+            Path(HF_HUB_CACHE) / "everyvoice-wavlm" / self._model_id.replace("/", "--")
+        )
         # Load from the flat local directory written by `everyvoice fetch-pretrained`.
         # Passing a directory path to from_pretrained skips all online revision
         # resolution; see fetch_pretrained.py for why this is necessary for WavLM.
         if (_local_dir / "config.json").exists():
             self.wavlm = AutoModel.from_pretrained(str(_local_dir))
         else:
-            self.wavlm = AutoModel.from_pretrained(model)
+            self.wavlm = AutoModel.from_pretrained(self._model_id)
         self.wavlm.requires_grad_(False)
-        self.wd = wd
-        self.resample = torchaudio.transforms.Resample(model_sr, slm_sr)
+        self.wavlm.eval()
+        # The rest of the module is already on the training device; move WavLM
+        # there too so forward passes don't fail with device mismatch.
+        device = next(self.wd.parameters()).device
+        self.wavlm = self.wavlm.to(device)
 
     def train(self, mode=True):
         super().train(mode)
         # WavLM is a fixed feature extractor — keep it in eval regardless of
         # the training mode set by the Lightning trainer on the parent module.
-        self.wavlm.eval()
+        if self.wavlm is not None:
+            self.wavlm.eval()
         return self
 
     def forward(self, wav, y_rec):
+        self._ensure_wavlm()
         with torch.no_grad():
             wav_16 = self.resample(wav)
             wav_embeddings = self.wavlm(
@@ -262,6 +282,7 @@ class WavLMLoss(torch.nn.Module):
         return floss.mean()
 
     def generator(self, y_rec):
+        self._ensure_wavlm()
         y_rec_16 = self.resample(y_rec)
         y_rec_embeddings = self.wavlm(
             input_values=y_rec_16, output_hidden_states=True
@@ -277,6 +298,7 @@ class WavLMLoss(torch.nn.Module):
         return loss_gen
 
     def discriminator(self, wav, y_rec):
+        self._ensure_wavlm()
         with torch.no_grad():
             wav_16 = self.resample(wav)
             wav_embeddings = self.wavlm(
@@ -311,6 +333,7 @@ class WavLMLoss(torch.nn.Module):
         return loss_disc_f.mean()
 
     def discriminator_forward(self, wav):
+        self._ensure_wavlm()
         with torch.no_grad():
             wav_16 = self.resample(wav)
             wav_embeddings = self.wavlm(

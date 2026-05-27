@@ -330,6 +330,16 @@ class StyleTTS2Module(L.LightningModule):
 
         self.initialize_from_config(self.config, load_pretrained_weights=False)
 
+        # Older checkpoints may have WavLM weights (wl.wavlm.*).  Drop them
+        # before Lightning applies the state dict — they are unused at synthesis
+        # time and are re-loaded lazily from the local cache when needed during
+        # training.
+        checkpoint["state_dict"] = {
+            k: v
+            for k, v in checkpoint["state_dict"].items()
+            if not k.startswith("wl.wavlm.")
+        }
+
     def on_save_checkpoint(self, checkpoint):
         hp = checkpoint.setdefault("hyper_parameters", {})
         hp["config"] = self.config
@@ -337,6 +347,15 @@ class StyleTTS2Module(L.LightningModule):
         checkpoint["model_info"] = {
             "name": self.__class__.__name__,
             "version": self._VERSION,
+        }
+        # WavLM weights are fixed pretrained weights that never change during
+        # training.  Strip them from the checkpoint to avoid bloating every
+        # saved checkpoint with ~300 MB of weights that are always re-loaded
+        # from the local cache on demand anyway.
+        checkpoint["state_dict"] = {
+            k: v
+            for k, v in checkpoint["state_dict"].items()
+            if not k.startswith("wl.wavlm.")
         }
 
     def check_and_upgrade_checkpoint(self, checkpoint):

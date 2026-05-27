@@ -21,19 +21,15 @@ def load_styletts2_model(model_path: Path, device):
     from ..lightning import StyleTTS2Module
     from ..utils import make_mel_transform
 
-    state = torch.load(model_path, map_location="cpu", weights_only=False)
-    hp = state.get("hyper_parameters", {})
-    native_config = hp["config"]
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
 
-    mode = hp.get("mode", "second")
-
-    module = StyleTTS2Module(native_config, mode=mode)
-    module.check_and_upgrade_checkpoint(state)
-    module.load_state_dict(state["state_dict"])
-    module.eval()
+    module = StyleTTS2Module()
+    module.on_load_checkpoint(checkpoint)
+    module.load_state_dict(checkpoint["state_dict"])
     module.to(device)
+    module.eval()
 
-    mel_transform = make_mel_transform(native_config).to(device)
+    mel_transform = make_mel_transform(module.config).to(device)
     return module, mel_transform
 
 
