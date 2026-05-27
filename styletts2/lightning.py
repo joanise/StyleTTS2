@@ -264,7 +264,7 @@ class StyleTTS2Module(L.LightningModule):
                     "diffusion",
                 }
                 state = torch.load(
-                    first_stage_path, map_location="cpu", weights_only=False
+                    first_stage_path, map_location="cpu", weights_only=True
                 )
                 if "state_dict" in state:
                     # Lightning checkpoint: extract per-submodule state dicts
@@ -325,7 +325,21 @@ class StyleTTS2Module(L.LightningModule):
         checkpoint = self.check_and_upgrade_checkpoint(checkpoint)
 
         hp = checkpoint.get("hyper_parameters", {})
-        self.config = hp["config"]
+        raw_config = hp["config"]
+
+        # New checkpoints store ev_config as a JSON-safe dict (via
+        # model_checkpoint_dump).  Old checkpoints stored the pydantic object
+        # directly.  Reconstruct when necessary so the rest of the code always
+        # gets a StyleTTS2Config instance.
+        if isinstance(raw_config.get("ev_config"), dict):
+            from .ev_config import StyleTTS2Config
+
+            raw_config = dict(raw_config)
+            raw_config["ev_config"] = StyleTTS2Config.model_validate(
+                raw_config["ev_config"]
+            )
+
+        self.config = raw_config
         self.mode = hp.get("mode", self.mode)
 
         self.initialize_from_config(self.config, load_pretrained_weights=False)
@@ -340,9 +354,40 @@ class StyleTTS2Module(L.LightningModule):
             if not k.startswith("wl.wavlm.")
         }
 
+    @staticmethod
+    def _config_to_checkpoint_safe(config: dict) -> dict:
+        """Recursively convert a native config dict to a JSON-safe representation.
+
+        Pydantic models are serialized via model_dump(mode='json'), which
+        converts Enums to their values and Paths to strings.  The result is then
+        recursed to catch any remaining non-primitive types.  Plain Path and Enum
+        values that appear outside pydantic models are also converted.  The result
+        contains only built-in Python types, so torch.load(weights_only=True) can
+        deserialise it.
+        """
+        import enum
+        from pathlib import Path
+
+        if hasattr(config, "model_dump"):
+            return StyleTTS2Module._config_to_checkpoint_safe(
+                config.model_dump(mode="json")
+            )
+        if isinstance(config, dict):
+            return {
+                k: StyleTTS2Module._config_to_checkpoint_safe(v)
+                for k, v in config.items()
+            }
+        if isinstance(config, (list, tuple)):
+            return [StyleTTS2Module._config_to_checkpoint_safe(x) for x in config]
+        if isinstance(config, Path):
+            return str(config)
+        if isinstance(config, enum.Enum):
+            return config.value
+        return config
+
     def on_save_checkpoint(self, checkpoint):
         hp = checkpoint.setdefault("hyper_parameters", {})
-        hp["config"] = self.config
+        hp["config"] = self._config_to_checkpoint_safe(self.config)
         hp["mode"] = self.mode
         checkpoint["model_info"] = {
             "name": self.__class__.__name__,

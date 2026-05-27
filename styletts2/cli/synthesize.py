@@ -21,7 +21,7 @@ def load_styletts2_model(model_path: Path, device):
     from ..lightning import StyleTTS2Module
     from ..utils import make_mel_transform
 
-    checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(model_path, map_location="cpu", weights_only=True)
 
     module = StyleTTS2Module()
     module.on_load_checkpoint(checkpoint)
@@ -221,7 +221,7 @@ def synthesize(
     module, mel_transform = load_styletts2_model(model_path, device)
     module._mel_transform = mel_transform
 
-    state = torch.load(model_path, map_location="cpu", weights_only=False)
+    state = torch.load(model_path, map_location="cpu", weights_only=True)
     global_step = int(state.get("global_step", 0))
 
     entries = [
