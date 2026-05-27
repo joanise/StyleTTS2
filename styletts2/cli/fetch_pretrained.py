@@ -66,4 +66,27 @@ def fetch_pretrained(
         plbert_cfg.get("local_checkpoint"),
     )
 
+    slm_model = config["model_params"]["slm"]["model"]
+    typer.echo(f"Fetching WavLM SLM from '{slm_model}':")
+    typer.echo(f"  {slm_model}")
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.constants import HF_HUB_CACHE
+
+    # Use snapshot_download to a flat local directory rather than relying on
+    # AutoModel.from_pretrained's standard HF cache.  The other pretrained
+    # models (F0, ASR, PLBERT) are fetched with hf_hub_download for a specific
+    # filename, so they bypass transformers entirely.  WavLM is the only model
+    # loaded via AutoModel.from_pretrained, which always runs transformers'
+    # format-detection logic: try model.safetensors first, get 404, then do a
+    # multi-request PR-discovery search.  Even when the files are cached, this
+    # discovery runs again because the weights land in the HF cache under the PR
+    # commit hash while from_pretrained resolves from the main commit hash, so
+    # they never match.  Downloading to local_dir bypasses the revision-keyed
+    # cache entirely: training calls from_pretrained("<path>") on a plain
+    # directory, which skips all online revision resolution.
+    _slm_local_dir = (
+        Path(HF_HUB_CACHE) / "everyvoice-wavlm" / slm_model.replace("/", "--")
+    )
+    snapshot_download(repo_id=slm_model, local_dir=str(_slm_local_dir))
+
     typer.echo("Done. All pretrained models are cached and ready for training.")

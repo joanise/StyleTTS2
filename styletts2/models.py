@@ -716,8 +716,11 @@ def _resolve_pretrained_file(repo_id: str, filename: str, local_path=None) -> st
     """Return a local path to a pretrained file, downloading from HuggingFace if needed."""
     if local_path is not None:
         return str(local_path)
-    from huggingface_hub import hf_hub_download
+    from huggingface_hub import hf_hub_download, try_to_load_from_cache
 
+    cached = try_to_load_from_cache(repo_id, filename=filename)
+    if isinstance(cached, str):
+        return cached
     return hf_hub_download(repo_id, filename=filename)
 
 

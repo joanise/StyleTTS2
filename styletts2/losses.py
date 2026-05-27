@@ -221,7 +221,18 @@ class WavLMLoss(torch.nn.Module):
 
     def __init__(self, model, wd, model_sr, slm_sr=16000):
         super(WavLMLoss, self).__init__()
-        self.wavlm = AutoModel.from_pretrained(model)
+        from pathlib import Path
+
+        from huggingface_hub.constants import HF_HUB_CACHE
+
+        _local_dir = Path(HF_HUB_CACHE) / "everyvoice-wavlm" / model.replace("/", "--")
+        # Load from the flat local directory written by `everyvoice fetch-pretrained`.
+        # Passing a directory path to from_pretrained skips all online revision
+        # resolution; see fetch_pretrained.py for why this is necessary for WavLM.
+        if (_local_dir / "config.json").exists():
+            self.wavlm = AutoModel.from_pretrained(str(_local_dir))
+        else:
+            self.wavlm = AutoModel.from_pretrained(model)
         self.wavlm.requires_grad_(False)
         self.wd = wd
         self.resample = torchaudio.transforms.Resample(model_sr, slm_sr)
