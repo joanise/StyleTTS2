@@ -20,7 +20,7 @@ def fetch_pretrained(
 
     Example:
 
-    **everyvoice fetch-pretrained text-to-wav config/e2e-text-to-wav-config.yaml**
+    **everyvoice fetch-pretrained text-to-wav config/everyvoice-text-to-wav-config.yaml**
     """
     from everyvoice.model.e2e.StyleTTS2_lightning.styletts2.ev_config import (
         StyleTTS2Config,
